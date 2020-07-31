@@ -12,6 +12,7 @@ import fetch from 'node-fetch'
 import { promisify } from 'util'
 import { cloneOrPull } from '../setup'
 import { unique } from './unique'
+import pMap from 'p-map'
 
 export type Commit = {
   date: Date
@@ -417,8 +418,9 @@ async function getAllVersions(
 ): Promise<string[]> {
   return unique(
     flatten(
-      await Promise.all(
-        Object.values(packages).map(async (pkg) => {
+      await pMap(
+        Object.values(packages),
+        async (pkg) => {
           const pkgVersions = []
           if (pkg.version.startsWith(prefix)) {
             pkgVersions.push(pkg.version)
@@ -440,7 +442,8 @@ async function getAllVersions(
             }
           }
           return pkgVersions
-        }),
+        },
+        { concurrency: 3 }, // Let's not spam npm too much
       ),
     ),
   )
@@ -606,6 +609,10 @@ async function publish() {
         console.log(
           `UPDATE_STUDIO set true, so we're updating it to ${latestStudioVersion}`,
         )
+        console.log(`Active branch`)
+        await run('.', 'git branch')
+        console.log(`Let's check out master!`)
+        await run('.', 'git checkout master')
         await run(
           '.',
           `pnpm update  -r @prisma/studio@${latestStudioVersion} @prisma/studio-transports@${latestStudioVersion} @prisma/studio-server@${latestStudioVersion} @prisma/studio-types@${latestStudioVersion}`,
@@ -645,10 +652,12 @@ Check them out at https://github.com/prisma/e2e-tests/actions?query=workflow%3At
         patchBranch,
       )
 
-      try {
-        await tagEnginesRepo(dryRun)
-      } catch (e) {
-        console.error(e)
+      if (!process.env.PATCH_BRANCH) {
+        try {
+          await tagEnginesRepo(dryRun)
+        } catch (e) {
+          console.error(e)
+        }
       }
     }
   } catch (e) {
@@ -924,18 +933,21 @@ async function publishPackages(
     }
   }
 
-  if (process.env.UPDATE_STUDIO) {
+  if (process.env.UPDATE_STUDIO || process.env.PATCH_BRANCH) {
     await run('.', `git config --global user.email "prismabots@gmail.com"`)
     await run('.', `git config --global user.name "prisma-bot"`)
-    await run('.', `git stash`, dryRun)
-    await run('.', `git checkout master`, dryRun)
-    await run('.', `git stash pop`, dryRun)
     await run(
       '.',
       `git remote set-url origin https://${process.env.GITHUB_TOKEN}@github.com/prisma/prisma.git`,
       dryRun,
       true,
     )
+  }
+
+  if (process.env.UPDATE_STUDIO) {
+    await run('.', `git stash`, dryRun)
+    await run('.', `git checkout master`, dryRun)
+    await run('.', `git stash pop`, dryRun)
   }
 
   // for now only push when studio is being updated
@@ -948,7 +960,14 @@ async function publishPackages(
     // commit and push it :)
     // we try catch this, as this is not necessary for CI to succeed
     await run(repo, `git status`, dryRun)
-    await pull(repo, dryRun)
+    await pull(repo, dryRun).catch((e) => {
+      if (process.env.PATCH_BRANCH) {
+        console.error(e)
+      } else {
+        throw e
+      }
+    })
+
     try {
       const unsavedChanges = await getUnsavedChanges(repo)
       if (!unsavedChanges) {

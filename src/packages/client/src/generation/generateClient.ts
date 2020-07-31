@@ -164,7 +164,10 @@ export async function generateClient({
     engineVersion,
   })
 
-  const denylistsErrors = validateDmmfAgainstDenylists(prismaClientDmmf)
+  const denylistsErrors = validateDmmfAgainstDenylists(
+    prismaClientDmmf,
+    generator?.previewFeatures,
+  )
 
   if (denylistsErrors) {
     let message = `${chalk.redBright.bold(
@@ -284,7 +287,7 @@ export async function generateClient({
       process.env.INIT_CWD,
       'node_modules/.prisma/client',
     )
-    if (finalOutputDir !== backupPath) {
+    if (finalOutputDir !== backupPath && !generator?.isCustomOutput) {
       await copy({
         from: finalOutputDir,
         to: backupPath,
@@ -451,12 +454,13 @@ async function fileSize(name: string): Promise<number | null> {
 
 function validateDmmfAgainstDenylists(
   prismaClientDmmf: PrismaClientDMMF.Document,
+  previewFeatures: string[] = [],
 ): Error[] | null {
   const errorArray = [] as Error[]
 
   const denylists = {
     // A copy of this list is also in prisma-engines. Any edit should be done in both places.
-    // https://github.com/prisma/prisma-engines/blob/master/libs/datamodel/core/src/validator/invalid_model_names.rs
+    // https://github.com/prisma/prisma-engines/blob/master/libs/datamodel/core/src/transform/ast_to_dml/reserved_model_names.rs
     models: [
       'dmmf',
       'PromiseType',
@@ -564,11 +568,13 @@ function validateDmmfAgainstDenylists(
       'while',
       'with',
       'yield',
-      'Transaction',
-      'transaction',
     ],
     fields: ['AND', 'OR', 'NOT'],
     dynamic: [] as string[],
+  }
+  if (previewFeatures.includes('tranactionApi')) {
+    denylists.models.push('transaction')
+    denylists.models.push('Transaction')
   }
 
   for (const { name } of prismaClientDmmf.datamodel.models) {

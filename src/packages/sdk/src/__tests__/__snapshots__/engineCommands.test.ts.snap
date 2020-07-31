@@ -28,9 +28,9 @@ Object {
         "native",
       ],
       "config": Object {},
-      "experimentalFeatures": Array [],
       "name": "gen",
       "output": null,
+      "previewFeatures": Array [],
       "provider": "fancy-provider",
     },
   ],
@@ -3100,16 +3100,6 @@ Object {
               "isNullable": false,
               "isRequired": false,
               "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
               "type": "String",
             },
             "name": "email",
@@ -3225,7 +3215,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "UserUpdateOneRequiredWithoutPostsInput",
@@ -3349,7 +3339,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "PostCreateManyWithoutAuthorInput",
@@ -3980,16 +3970,6 @@ Object {
               "isNullable": false,
               "isRequired": false,
               "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
               "type": "String",
             },
             "name": "email",
@@ -3997,7 +3977,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "PostUpdateManyWithoutAuthorInput",
@@ -4010,16 +3990,6 @@ Object {
       },
       Object {
         "fields": Array [
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
           Object {
             "inputType": Object {
               "isList": false,
@@ -8206,16 +8176,6 @@ Object {
               "isNullable": false,
               "isRequired": false,
               "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
               "type": "String",
             },
             "name": "email",
@@ -8341,7 +8301,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "UserUpdateOneRequiredWithoutPostsInput",
@@ -8501,7 +8461,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "PostCreateManyWithoutAuthorInput",
@@ -9142,16 +9102,6 @@ Object {
               "isNullable": false,
               "isRequired": false,
               "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
               "type": "String",
             },
             "name": "email",
@@ -9159,7 +9109,7 @@ Object {
           Object {
             "inputType": Object {
               "isList": false,
-              "isNullable": true,
+              "isNullable": false,
               "isRequired": false,
               "kind": "object",
               "type": "PostUpdateManyWithoutAuthorInput",
@@ -9172,16 +9122,6 @@ Object {
       },
       Object {
         "fields": Array [
-          Object {
-            "inputType": Object {
-              "isList": false,
-              "isNullable": false,
-              "isRequired": false,
-              "kind": "scalar",
-              "type": "Int",
-            },
-            "name": "id",
-          },
           Object {
             "inputType": Object {
               "isList": false,

@@ -209,9 +209,15 @@ export declare type PromiseReturnType<T extends (...args: any) => Promise<any>> 
 
 export declare type Enumerable<T> = T | Array<T>;
 
-export declare type TrueKeys<T> = {
+export type RequiredKeys<T> = {
+  [K in keyof T]-?: {} extends Pick<T, K> ? never : K
+}[keyof T]
+
+export declare type TruthyKeys<T> = {
   [key in keyof T]: T[key] extends false | undefined | null ? never : key
 }[keyof T]
+
+export declare type TrueKeys<T> = TruthyKeys<Pick<T, RequiredKeys<T>>>
 
 /**
  * Subset
@@ -225,7 +231,7 @@ declare class PrismaClientFetcher {
   private readonly debug;
   private readonly hooks?;
   constructor(prisma: PrismaClient<any, any>, debug?: boolean, hooks?: Hooks | undefined);
-  request<T>(document: any, dataPath?: string[], rootField?: string, typeName?: string, isList?: boolean, callsite?: string, collectTimestamps?: any): Promise<T>;
+  request<T>(document: any, dataPath?: string[], rootField?: string, typeName?: string, isList?: boolean, callsite?: string): Promise<T>;
   sanitizeMessage(message: string): string;
   protected unpack(document: any, data: any, path: string[], rootField?: string, isList?: boolean): any;
 }
@@ -493,6 +499,39 @@ export type LogEvent = {
 }
 /* End Types for Logging */
 
+
+export type Action =
+  | 'findOne'
+  | 'findMany'
+  | 'create'
+  | 'update'
+  | 'updateMany'
+  | 'upsert'
+  | 'delete'
+  | 'deleteMany'
+  | 'executeRaw'
+  | 'queryRaw'
+  | 'aggregate'
+
+/**
+ * These options are being passed in to the middleware as "params"
+ */
+export type MiddlewareParams = {
+  model?: string
+  action: Action
+  args: any
+  dataPath: string[]
+  runInTransaction: boolean
+}
+
+/**
+ * The \`T\` type makes sure, that the \`return proceed\` is not forgotten in the middleware implementation
+ */
+export type Middleware<T = any> = (
+  params: MiddlewareParams,
+  next: (params: MiddlewareParams) => Promise<T>,
+) => Promise<T>
+
 // tested in getLogLevel.test.ts
 export declare function getLogLevel(log: Array<LogLevel | LogDefinition>): LogLevel | undefined;
 
@@ -550,6 +589,17 @@ ${indent(this.jsDoc, tab)}
    */
   disconnect(): Promise<any>;
 
+  ${
+    this.generator?.previewFeatures?.includes('middlewares')
+      ? `
+  /**
+   * Add a middleware
+   */
+  use(cb: Middleware): void
+  `
+      : ''
+  }
+
   /**
    * Executes a raw query and returns the number of affected rows
    * @example
@@ -578,7 +628,7 @@ ${indent(this.jsDoc, tab)}
   */
   queryRaw<T = any>(query: string | TemplateStringsArray, ...values: any[]): Promise<T>;
 ${
-  this.generator?.experimentalFeatures?.includes('transactionApi')
+  this.generator?.previewFeatures?.includes('transactionApi')
     ? `
   /**
    * Execute queries in a transaction
@@ -718,7 +768,7 @@ export class Model implements Generatable {
       if (!fieldName) {
         continue
       }
-      const field = this.dmmf.getField(fieldName)
+      const field = this.dmmf.rootFieldMap[fieldName]
       if (!field) {
         throw new Error(
           `Oops this must not happen. Could not find field ${fieldName} on either Query or Mutation`,
@@ -740,8 +790,15 @@ export class Model implements Generatable {
     return argsTypes
   }
   private getAggregationTypes() {
-    const { model } = this
+    const { model, mapping } = this
     const aggregateType = this.dmmf.outputTypeMap[getAggregateName(model.name)]
+    if (!aggregateType) {
+      throw new Error(
+        `Could not get aggregate type "${getAggregateName(model.name)}" for "${
+          model.name
+        }"`,
+      )
+    }
     const aggregateTypes = [aggregateType]
 
     const avgType = this.dmmf.outputTypeMap[getAvgAggregateName(model.name)]
@@ -760,6 +817,13 @@ export class Model implements Generatable {
     }
     if (maxType) {
       aggregateTypes.push(maxType)
+    }
+
+    const aggregateRootField = this.dmmf.rootFieldMap[mapping?.aggregate!]
+    if (!aggregateRootField) {
+      throw new Error(
+        `Could not find aggregate root field for model ${model.name}. Mapping: ${mapping?.aggregate}`,
+      )
     }
 
     return `${aggregateTypes
@@ -795,15 +859,18 @@ ${
 
 export type ${getAggregateArgsName(model.name)} = {
 ${indent(
-  aggregateType.fields
-    .map((f) => {
-      if (f.name === 'count') {
-        return `${f.name}?: true`
-      }
-      return `${f.name}?: ${getAggregateInputType(
-        (f.outputType.type as SchemaOutputType).name,
-      )}`
-    })
+  aggregateRootField.args
+    .map((arg) => new InputField(arg).toTS())
+    .concat(
+      aggregateType.fields.map((f) => {
+        if (f.name === 'count') {
+          return `${f.name}?: true`
+        }
+        return `${f.name}?: ${getAggregateInputType(
+          (f.outputType.type as DMMF.OutputType).name,
+        )}`
+      }),
+    )
     .join('\n'),
   tab,
 )}
@@ -872,7 +939,7 @@ ${indent(
 }
 
 ${
-  this.generator?.experimentalFeatures?.includes('aggregateApi')
+  this.generator?.previewFeatures?.includes('aggregateApi')
     ? this.getAggregationTypes()
     : ''
 }
@@ -1069,8 +1136,7 @@ export class ModelDelegate implements Generatable {
   ) {}
   public toTS(): string {
     const { fields, name } = this.outputType
-    // TODO: Turn O(n^2) to O(n)
-    const mapping = this.dmmf.mappings.find((m) => m.model === name)!
+    const mapping = this.dmmf.mappingsMap[name]
     if (!mapping) {
       return ''
     }
@@ -1107,7 +1173,7 @@ ${actionName}<T extends ${getModelArgName(name, actionName)}>(
   )}, 'select' | 'include'>): Promise<number>
 
 ${
-  this.generator?.experimentalFeatures?.includes('aggregateApi')
+  this.generator?.previewFeatures?.includes('aggregateApi')
     ? `
   /**
    * Aggregate
@@ -1141,7 +1207,6 @@ export declare class Prisma__${name}Client<T> implements Promise<T> {
   private _isList;
   private _callsite;
   private _requestPromise?;
-  private _collectTimestamps?;
   constructor(_dmmf: DMMFClass, _fetcher: PrismaClientFetcher, _queryType: 'query' | 'mutation', _rootField: string, _clientMethod: string, _args: any, _dataPath: string[], _errorFormat: ErrorFormat, _measurePerformance?: boolean | undefined, _isList?: boolean);
   readonly [Symbol.toStringTag]: 'PrismaClientPromise';
 ${indent(

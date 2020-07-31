@@ -1,6 +1,6 @@
 datasource db {
   provider = "sqlite"
-  url      = "file:dev.db"
+  url      = "sqlite:dev.db"
   default  = true
 }
 
@@ -25,6 +25,6 @@ model Post {
   published Boolean
   title     String
   content   String?
-  authorId  String?
+  authorId  String?  @map("author")
   author    User?    @relation(fields: [authorId], references: [id])
 }

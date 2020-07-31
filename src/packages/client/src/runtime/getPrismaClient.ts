@@ -31,7 +31,7 @@ import {
 } from '@prisma/generator-helper/dist/types'
 import { getLogLevel } from './getLogLevel'
 import { mergeBy } from './mergeBy'
-import { lowerCase } from './utils/common'
+import { lowerCase, getOutputTypeName } from './utils/common'
 import { deepSet } from './utils/deep-set'
 import { Dataloader } from './Dataloader'
 import { printStack } from './utils/printStack'
@@ -39,7 +39,7 @@ import stripAnsi from 'strip-ansi'
 import { printJsonWithErrors } from './utils/printJsonErrors'
 import { ConnectorType } from './utils/printDatasources'
 import { omit } from './utils/omit'
-import { mapExperimentalFeatures } from '@prisma/sdk/dist/utils/mapExperimentalFeatures'
+import { mapPreviewFeatures } from '@prisma/sdk/dist/utils/mapPreviewFeatures'
 import { serializeRawParameters } from './utils/serializeRawParameters'
 
 export type ErrorFormat = 'pretty' | 'colorless' | 'minimal'
@@ -88,8 +88,8 @@ export interface PrismaClientOptions {
       cwd?: string
       binaryPath?: string
       endpoint?: string
+      enableEngineDebugMode?: boolean
     }
-    measurePerformance?: boolean
   }
 }
 
@@ -103,9 +103,40 @@ export type HookParams = {
   args: any
 }
 
+/**
+ * These options are being passed in to the middleware as "params"
+ */
+export type MiddlewareParams = {
+  model?: string
+  action: Action
+  args: any
+  dataPath: string[]
+  runInTransaction: boolean
+}
+
+/**
+ * The `T` type makes sure, that the `return proceed` is not forgotten in the middleware implementation
+ */
+export type Middleware<T = any> = (
+  params: MiddlewareParams,
+  next: (params: MiddlewareParams) => Promise<T>,
+) => Promise<T>
+
+export interface InternalRequestParams extends MiddlewareParams {
+  /**
+   * The original client method being called.
+   * Even though the rootField / operation can be changed,
+   * this method stays as it is, as it's what the user's
+   * code looks like
+   */
+  clientMethod: string
+  callsite?: string
+  headers?: Record<string, string>
+}
+
 export type HookPoint = 'all' | 'engine'
 
-export type EngineHookParams = {
+export type EngineMiddlewareParams = {
   document: Document
   runInTransaction?: boolean
 }
@@ -115,14 +146,13 @@ export type AllHookArgs = {
   params: HookParams
   fetch: (params: HookParams) => Promise<any>
 }
-
-export type EngineHookArgs = {
-  params: EngineHookParams
-  fetch: (params: EngineHookParams) => Promise<any>
-}
-
-export type AllHookCallback = (args: AllHookArgs) => Promise<any>
-export type EngineHookCallback = (args: EngineHookArgs) => Promise<any>
+/**
+ * The `T` type makes sure, that the `return proceed` is not forgotten in the middleware implementation
+ */
+export type EngineMiddleware<T = any> = (
+  params: EngineMiddlewareParams,
+  next: (params: EngineMiddlewareParams) => Promise<T>,
+) => Promise<T>
 
 export type Hooks = {
   beforeRequest?: (options: HookParams) => any
@@ -172,6 +202,34 @@ export interface GetPrismaClientOptions {
   engineVersion?: string
 }
 
+export type Action =
+  | 'findOne'
+  | 'findMany'
+  | 'create'
+  | 'update'
+  | 'updateMany'
+  | 'upsert'
+  | 'delete'
+  | 'deleteMany'
+  | 'executeRaw'
+  | 'queryRaw'
+  | 'aggregate'
+
+const actionOperationMap = {
+  findOne: 'query',
+  findMany: 'query',
+  count: 'query',
+  create: 'mutation',
+  update: 'mutation',
+  updateMany: 'mutation',
+  upsert: 'mutation',
+  delete: 'mutation',
+  deleteMany: 'mutation',
+  executeRaw: 'mutation',
+  queryRaw: 'mutation',
+  aggregate: 'query',
+}
+
 const aggregateKeys = {
   avg: true,
   count: true,
@@ -192,14 +250,13 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
     disconnectionPromise?: Promise<any>
     engineConfig: EngineConfig
     private errorFormat: ErrorFormat
-    private measurePerformance: boolean
     private hooks?: Hooks
     private _getConfigPromise?: Promise<{
       datasources: DataSource[]
       generators: GeneratorConfig[]
     }>
-    private _allHookCb?: AllHookCallback
-    private _engineHookCb?: EngineHookCallback
+    private _middlewares: Middleware[] = []
+    private _engineMiddlewares: EngineMiddleware[] = []
     constructor(optionsArg?: PrismaClientOptions) {
       const options: PrismaClientOptions = optionsArg ?? {}
       const internal = options.__internal ?? {}
@@ -243,8 +300,6 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         this.errorFormat = 'colorless' // default errorFormat
       }
 
-      this.measurePerformance = internal.measurePerformance || false
-
       const envFile = this.readEnv()
 
       this.dmmf = new DMMFClass(config.document)
@@ -255,14 +310,15 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         cwd = config.dirname
       }
 
-      const experimentalFeatures = config.generator?.experimentalFeatures ?? []
-      if (!experimentalFeatures.includes('aggregations')) {
-        experimentalFeatures.push('aggregations')
+      const previewFeatures = config.generator?.previewFeatures ?? []
+      if (!previewFeatures.includes('aggregations')) {
+        previewFeatures.push('aggregations')
       }
 
       this.engineConfig = {
         cwd,
-        debug: useDebug,
+        enableDebugLogs: useDebug,
+        enableEngineDebugMode: engineConfig.enableEngineDebugMode,
         datamodelPath: path.join(config.dirname, 'schema.prisma'),
         prismaPath: engineConfig.binaryPath ?? undefined,
         engineEndpoint: engineConfig.endpoint,
@@ -282,7 +338,7 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         env: envFile,
         flags: [],
         clientVersion: config.clientVersion,
-        enableExperimental: mapExperimentalFeatures(experimentalFeatures),
+        enableExperimental: mapPreviewFeatures(previewFeatures),
       }
 
       const sanitizedEngineConfig = omit(this.engineConfig, [
@@ -333,24 +389,28 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
 
       return {}
     }
-    use(namespace: 'all', cb: AllHookCallback)
-    use(namespace: 'engine', cb: EngineHookCallback)
-    use(namespace: HookPoint, cb: AllHookCallback | EngineHookCallback) {
-      if (namespace === 'all') {
-        if (this._allHookCb) {
-          console.error(
-            `WARNING: The "all" hook already has a callback. It will be overriden now`,
-          )
+    use(cb: Middleware)
+    use(namespace: 'all', cb: Middleware)
+    use(namespace: 'engine', cb: EngineMiddleware)
+    use(namespace: HookPoint | Middleware, cb?: Middleware | EngineMiddleware) {
+      if (config.generator?.previewFeatures?.includes('middlewares')) {
+        if (typeof namespace === 'function') {
+          this._middlewares.push(namespace)
+        } else if (typeof namespace === 'string') {
+          if (namespace === 'all') {
+            this._middlewares.push(cb! as Middleware)
+          } else if (namespace === 'engine') {
+            this._engineMiddlewares.push(cb! as EngineMiddleware)
+          } else {
+            throw new Error(`Unknown middleware hook ${namespace}`)
+          }
+        } else {
+          throw new Error(`Invalid middleware ${namespace}`)
         }
-        this._allHookCb = cb as AllHookCallback
-      }
-      if (namespace === 'engine') {
-        if (this._engineHookCb) {
-          console.error(
-            `WARNING: The "engine" hook already has a callback. It will be overriden now`,
-          )
-        }
-        this._engineHookCb = cb as EngineHookCallback
+      } else {
+        throw new Error(
+          `In order to use the middlewares api, please enable set previewFeatures = ["middlewares"]`,
+        )
       }
     }
     on(eventType: any, callback: (event: any) => void) {
@@ -474,32 +534,23 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         debug(`prisma.executeRaw(${query})`)
       }
 
-      const select = { query, parameters }
+      const args = { query, parameters }
 
-      const document = makeDocument({
-        dmmf: this.dmmf,
-        rootField: 'executeRaw',
-        rootTypeName: 'mutation',
-        select,
-      })
-
-      document.validate({ query, parameters }, false, 'raw', this.errorFormat)
-
-      const docString = String(document)
-      debug(`Generated request:`)
-      debug(docString + '\n')
-
-      return this.fetcher.request({
-        document,
-        rootField: 'executeRaw',
-        typeName: 'executeRaw',
-        isList: false,
-        dataPath: [],
+      return this._request({
+        args,
         clientMethod: 'executeRaw',
-        engineHook: this._engineHookCb,
-        allHook: this._allHookCb,
-        args: select,
+        dataPath: [],
+        action: 'executeRaw',
+        callsite: this._getCallsite(),
+        runInTransaction: false,
       })
+    }
+
+    private _getCallsite() {
+      if (this.errorFormat !== 'minimal') {
+        return new Error().stack
+      }
+      return undefined
     }
 
     /**
@@ -547,36 +598,52 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         debug(`prisma.queryRaw(${query})`)
       }
 
-      const select = { query, parameters }
+      const args = { query, parameters }
 
-      const document = makeDocument({
-        dmmf: this.dmmf,
-        rootField: 'queryRaw',
-        rootTypeName: 'mutation',
-        select,
-      })
-
-      document.validate(select, false, 'raw', this.errorFormat)
-
-      const docString = String(document)
-      debug(`Generated request:`)
-      debug(docString + '\n')
-
-      return this.fetcher.request({
-        document,
-        rootField: 'queryRaw',
-        typeName: 'queryRaw',
-        isList: false,
-        dataPath: [],
+      return this._request({
+        args,
         clientMethod: 'queryRaw',
-        engineHook: this._engineHookCb,
-        allHook: this._allHookCb,
-        args: select,
+        dataPath: [],
+        action: 'queryRaw',
+        callsite: this._getCallsite(),
+        runInTransaction: false,
+      })
+    }
+
+    async __internal_triggerPanic(fatal: boolean) {
+      if (!this.engineConfig.enableEngineDebugMode) {
+        throw new Error(`In order to use .__internal_triggerPanic(), please enable the debug mode like so:
+new PrismaClient({
+  __internal: {
+    engine: {
+      enableEngineDebugMode: true
+    }
+  }
+})`)
+      }
+
+      const query = 'SELECT 1'
+
+      const headers: Record<string, string> = fatal
+        ? { 'X-DEBUG-FATAL': '1' }
+        : { 'X-DEBUG-NON-FATAL': '1' }
+
+      return this._request({
+        action: 'queryRaw',
+        args: {
+          query,
+          parameters: undefined,
+        },
+        clientMethod: 'queryRaw',
+        dataPath: [],
+        runInTransaction: false,
+        headers,
+        callsite: this._getCallsite(),
       })
     }
 
     async transaction(promises: Array<any>): Promise<any> {
-      if (config.generator?.experimentalFeatures?.includes('transactionApi')) {
+      if (config.generator?.previewFeatures?.includes('transactionApi')) {
         for (const p of promises) {
           if (
             !p.requestTransaction ||
@@ -590,9 +657,156 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         return Promise.all(promises.map((p) => p.requestTransaction()))
       } else {
         throw new Error(
-          `In order to use the .transaction() api, please enable 'experimentalFeatures = "transactionApi" in your schema.`,
+          `In order to use the .transaction() api, please enable 'previewFeatures = "transactionApi" in your schema.`,
         )
       }
+    }
+
+    private _request(internalParams: InternalRequestParams) {
+      if (this._middlewares.length > 0) {
+        // https://perf.link/#eyJpZCI6Img4bmd0anp5eGxrIiwidGl0bGUiOiJGaW5kaW5nIG51bWJlcnMgaW4gYW4gYXJyYXkgb2YgMTAwMCIsImJlZm9yZSI6ImNvbnN0IGRhdGEgPSB7XG4gIG9wZXJhdGlvbjogXCJxdWVyeVwiLFxuICByb290RmllbGQ6IFwiZmluZE1hbnlVc2VyXCIsXG4gIGFyZ3M6IHtcbiAgICB3aGVyZTogeyBpZDogeyBndDogNSB9IH1cbiAgfSxcbiAgZGF0YVBhdGg6IFtdLFxuICBjbGllbnRNZXRob2Q6ICd1c2VyLmZpbmRNYW55J1xufSIsInRlc3RzIjpbeyJuYW1lIjoiZm9yIGluIiwiY29kZSI6ImNvbnN0IG5ld0RhdGEgPSB7fVxuZm9yIChjb25zdCBrZXkgaW4gZGF0YSkge1xuICBpZiAoa2V5ICE9PSAnY2xpZW50TWV0aG9kJykge1xuICAgIG5ld0RhdGFba2V5XSA9IGRhdGFba2V5XVxuICB9XG59IiwicnVucyI6WzU1MzAwMCw0OTAwMDAsMzQ0MDAwLDYyNDAwMCwxMzkxMDAwLDEyMjQwMDAsMTA2NDAwMCwxMjE3MDAwLDc0MDAwLDM3MzAwMCw5MDUwMDAsNTM3MDAwLDE3MDYwMDAsOTAzMDAwLDE0MjUwMDAsMTMxMjAwMCw3NjkwMDAsMTM0NTAwMCwxOTQ4MDAwLDk5MDAwMCw5MDAwMDAsMTM0ODAwMCwxMDk2MDAwLDM4NjAwMCwxNTE3MDAwLDE5MzYwMDAsMTAwMCwyMTM0MDAwLDEzMjgwMDAsODI5MDAwLDE1ODYwMDAsMTc2MzAwMCw1MDgwMDAsOTg2MDAwLDE5NDkwMDAsMjEwODAwMCwxNjA4MDAwLDIyNDAwMCwxOTAyMDAwLDEyNjgwMDAsMjEzNDAwMCwxNzEwMDAwLDEzNzIwMDAsMjExMDAwMCwxNzgwMDAwLDc3NzAwMCw1NzgwMDAsNDAwMCw4OTAwMDAsMTEwMTAwMCwxNTk0MDAwLDE3ODAwMDAsMzU0MDAwLDU0NDAwMCw4MjQwMDAsNzEwMDAwLDg0OTAwMCwxNjQwMDAwLDE5ODQwMDAsNzAzMDAwLDg4MjAwMCw4NTAwMDAsMTA2MDAwLDMwMzAwMCwxMzMwMDAsNjA4MDAwLDIxMzQwMDAsNTUxMDAwLDc0MjAwMCwyMDcwMDAsMTU3NTAwMCwxMzQwMDAsNDAwMCwxMDAwLDQ5NDAwMCwyNTAwMDAsMTQwMjAwMCw2OTgwMDAsNTgxMDAwLDQ4MDAwMCwyMDMwMDAsMTY4MzAwMCwxNjcxMDAwLDEyNDAwMDAsMTk1NjAwMCwzMDUwMDAsODkwMDAsNjUzMDAwLDE3MDgwMDAsMTYwMTAwMCwxOTg0MDAwLDg4ODAwMCwyMTAwMDAwLDE5NzUwMDAsNTM2MDAwLDU3NTAwMCwyMTM0MDAwLDEwMTcwMDAsMTI5NzAwMCw3NTYwMDBdLCJvcHMiOjEwNDUxNTB9LHsibmFtZSI6IkRlY29uc3RydWN0b3IiLCJjb2RlIjoiY29uc3QgeyBjbGllbnRNZXRob2QsIC4uLnJlc3QgfSA9IGRhdGEiLCJydW5zIjpbMjE0MDAwLDUxMDAwLDg2NDAwMCw3MjcwMDAsNDMxMDAwLDIyMDAwMCwzOTAwMDAsODQxMDAwLDIyOTAwMCw3MjIwMDAsNDEzMDAwLDYwODAwMCwyOTgwMDAsMzY4MDAwLDg2NDAwMCw5MjQwMDAsMTI4MDAwLDU1MzAwMCw4ODAwMDAsNTQ1MDAwLDc3NTAwMCw0MzAwMDAsMjM3MDAwLDc4NjAwMCw1NTUwMDAsNTI2MDAwLDMyNzAwMCw2MzAwMCw5MTIwMDAsMTgxMDAwLDMzMTAwMCw0MzAwMCwyMjUwMDAsNTQ3MDAwLDgyMjAwMCw3OTMwMDAsMTA1NzAwMCw1NjAwMCwyNzUwMDAsMzkzMDAwLDgwNTAwMCw5MzAwMCw3NjYwMDAsODM0MDAwLDUwMzAwMCw4MDAwMCwyMzgwMDAsNDY0MDAwLDU2NDAwMCw3MzAwMDAsOTU1MDAwLDgwOTAwMCwyMDMwMDAsNDEzMDAwLDM0NDAwMCw1MDIwMDAsNjEzMDAwLDEwMDAwMCw0MzIwMDAsNjcwMDAwLDQ1MzAwMCw4OTEwMDAsNTUwMDAsMjMwMDAwLDM5MTAwMCw3NTQwMDAsMTEyMjAwMCw3NjIwMDAsMzU3MDAwLDQ3MDAwLDc5MjAwMCwzNTQwMDAsMTA4MDAwMCwxNjAwMCwxODgwMDAsMTQxMDAwLDIxMDAwMCw2MDcwMDAsOTAyMDAwLDgyNTAwMCwxOTAwMDAsMjMzMDAwLDI4MzAwMCwyMzgwMDAsNjk2MDAwLDc2ODAwMCw3NTgwMDAsMTk0MDAwLDI3OTAwMCwyMjMwMDAsMjM4MDAwLDkzNDAwMCw2MDUwMDAsMTcwMDAsMjEwMDAwLDMyMjAwMCwxMDM0MDAwLDgxMjAwMCw0NDYwMDAsNjMxMDAwXSwib3BzIjo0OTAxMDB9LHsibmFtZSI6ImRlbGV0ZSIsImNvZGUiOiJjb25zdCB7IGNsaWVudE1ldGhvZCB9ID0gZGF0YVxuZGVsZXRlIGRhdGEuY2xpZW50TWV0aG9kIiwicnVucyI6WzI3NjIwMDAsNjIyMDAwLDEwNTcwMDAsMzIzMTAwMCwzNDQ2MDAwLDIwNzMwMDAsMzM4MjAwMCwyNzA0MDAwLDM4ODEwMDAsMTIwMTAwMCwzNzk3MDAwLDI1OTAwMCwxMDI4MDAwLDI1MTgwMDAsMjEwMjAwMCwxOTczMDAwLDM0MTIwMDAsMzU4MDAwLDExNDcwMDAsMTA3NDAwMCwzMTk1MDAwLDM2NzUwMDAsNTQ3MDAwLDIwNzkwMDAsMjc0NTAwMCwyNDE1MDAwLDIxOTAwMCwzNzM3MDAwLDM2OTIwMDAsMTY0MDAwLDI0MzMwMDAsNjQzMDAwLDcxODAwMCw0Mzg2MDAwLDE3MDIwMDAsMTAyNDAwMCw1NjUwMDAsNDIxOTAwMCwxMTk3MDAwLDE4MzkwMDAsMzgyMTAwMCwxMTUyMDAwLDg1MzAwMCwxMzczMDAwLDI5NTAwMCwxNDg5MDAwLDE0MjEwMDAsMjcyNDAwMCw1MDYxMDAwLDI2NTcwMDAsMjYzNzAwMCwyOTkwMDAsMjE1NzAwMCwxNTAxMDAwLDM2OTAwMDAsMzU3OTAwMCw0MjE5MDAwLDI4NTgwMDAsNTI0MzAwMCwxNTA0MDAwLDEyMTMwMDAsMjM4NDAwMCw3NzgwMDAsMjgyNjAwMCwxNzQ5MDAwLDM2MjAwMCwyNzEzMDAwLDMzODYwMDAsMzE2NjAwMCwxNTMwMDAsNzk0MDAwLDMyMTcwMDAsMjA4MjAwMCw0MTUwMDAsMzMyMDAwMCwyMTA1MDAwLDE1NzYwMDAsMjUxMDAwLDIzMjkwMDAsOTI1MDAwLDM3MTUwMDAsNjkyMDAwLDE5MDIwMDAsMjA0NzAwMCwyNTM5MDAwLDIwMjkwMDAsMzE3OTAwMCwyMTA2MDAwLDg5NTAwMCwxNTUwMDAwLDYwNzAwMCw0MTA1MDAwLDM0ODMwMDAsMzcxNTAwMCw0OTQwMDAwLDIyODAwMCw0MDI2MDAwLDE2MTYwMDAsMzMxNDAwMCwyNDIyMDAwXSwib3BzIjoyMTY2MDgwfSx7Im5hbWUiOiJDcmVhdGUgbmV3IG9iamVjdCIsImNvZGUiOiJjb25zdCBuZXdEYXRhID0ge1xuICBvcGVyYXRpb246IGRhdGEub3BlcmF0aW9uLFxuICByb290RmllbGQ6IGRhdGEucm9vdEZpZWxkLFxuICBhcmdzOiBkYXRhLmFyZ3MsXG4gIGRhdGFQYXRoOiBkYXRhLmRhdGFQYXRoXG59IiwicnVucyI6WzcwNTAwMCwxMTAwMDAsMzI3NTAwMCwxOTgwMDAsMjE5OTAwMCw0MzYwMDAsODI4MDAwLDI5MjcwMDAsNzI0MDAwLDI1NDAwMCwyOTgzMDAwLDI2NzIwMDAsMjUzMDAwLDI4MjcwMDAsMzA0ODAwMCwyOTA3MDAwLDM0OTkwMDAsMjY1OTAwMCwzODIyMDAwLDI3NzcwMDAsMzc5NzAwMCw4MDAwMDAsNDM1MDAwLDExOTMwMDAsMTAwMDAsMTQ0MDAwMCw3NTcwMDAsMTMyMDAwMCwzMjIwMDAsMjA3MDAwLDM2ODAwMDAsMzkxMTAwMCwzMjQxMDAwLDExMDcwMDAsNDM4MDAwLDMwNDQwMDAsMTA3NjAwMCwyMTAwMDAsNDIxOTAwMCwzNzQ4MDAwLDQwNjcwMDAsNzc0MDAwLDYzMDAwLDMyMTAwMCwzMDQ4MDAwLDMxMjgwMDAsMTg3MTAwMCwzNTkxMDAwLDI0MzcwMDAsNjcxMDAwLDc5OTAwMCwxMTUzMDAwLDIxMTMwMDAsOTUwMDAsNTg3MDAwLDYyMzAwMCwxMzEzMDAwLDMxNTgwMDAsMzMyNzAwMCwxNTkwMDAsNDg4MDAwLDIxMTAwMCwxMjk0MDAwLDExNTcwMDAsNDA0MDAwLDM2MjMwMDAsMjY4NDAwMCw4NzkwMDAsMjE4NTAwMCwxNTkyMDAwLDM2ODcwMDAsMjI0ODAwMCwyMjE4MDAwLDE3NDMwMDAsNzg4MDAwLDQwODYwMDAsMjExNTAwMCwzOTE0MDAwLDM5MjgwMDAsNDM3MjAwMCwxOTkwMDAsMzc1MzAwMCwzNjQ3MDAwLDE2MjcwMDAsMTQ5OTAwMCwxODQyMDAwLDIxMjkwMDAsNDAwMCwxMjIzMDAwLDI4NjMwMDAsMzgzNDAwMCwzNjk0MDAwLDYzNjAwMCw0MjQ3MDAwLDQwMjIwMDAsMTAwMDAsMTcxNDAwMCwxNzUwMDAwLDI5MDEwMDAsMTM0NjAwMF0sIm9wcyI6MTkzOTEyMH1dLCJ1cGRhdGVkIjoiMjAyMC0wNy0xNVQxMTowMDo1Ny45MzhaIn0%3D
+        const params: MiddlewareParams = {
+          args: internalParams.args,
+          dataPath: internalParams.dataPath,
+          runInTransaction: internalParams.runInTransaction,
+          action: internalParams.action,
+          model: internalParams.model,
+        }
+        return this._requestWithMiddlewares(
+          params,
+          this._middlewares.slice(),
+          internalParams.clientMethod,
+          internalParams.callsite,
+          internalParams.headers,
+        )
+      }
+
+      return this._executeRequest(internalParams)
+    }
+
+    private _requestWithMiddlewares(
+      params: MiddlewareParams,
+      middlewares: Middleware[],
+      clientMethod: string,
+      callsite?: string,
+      headers?: Record<string, string>,
+    ) {
+      const middleware = middlewares.shift()
+      if (middleware) {
+        return middleware(params, (params2) =>
+          this._requestWithMiddlewares(
+            params2,
+            middlewares,
+            clientMethod,
+            callsite,
+          ),
+        )
+      }
+
+      // No, we won't copy the whole object here just to make it easier to do TypeScript
+      // as it would be much slower
+      ;(params as InternalRequestParams).clientMethod = clientMethod
+      ;(params as InternalRequestParams).callsite = callsite
+      ;(params as InternalRequestParams).headers = headers
+
+      return this._executeRequest(params as InternalRequestParams)
+    }
+
+    private _executeRequest({
+      args,
+      clientMethod,
+      dataPath,
+      callsite,
+      runInTransaction,
+      action,
+      model,
+      headers,
+    }: InternalRequestParams) {
+      if (action !== 'executeRaw' && action !== 'queryRaw' && !model) {
+        throw new Error(`Model missing for action ${action}`)
+      }
+
+      if ((action === 'executeRaw' || action === 'queryRaw') && model) {
+        throw new Error(
+          `executeRaw and queryRaw can't be executed on a model basis. The model ${model} has been provided`,
+        )
+      }
+
+      let rootField: string | undefined
+      const operation = actionOperationMap[action]
+
+      if (action === 'executeRaw' || action === 'queryRaw') {
+        rootField = action
+      }
+
+      // TODO: Replace with lookup map for speedup
+      let mapping
+      if (model) {
+        mapping = this.dmmf.mappingsMap[model]
+        if (!mapping) {
+          throw new Error(`Could not find mapping for model ${model}`)
+        }
+
+        rootField = mapping[action]
+      }
+
+      if (operation !== 'query' && operation !== 'mutation') {
+        throw new Error(`Invalid operation ${operation} for action ${action}`)
+      }
+
+      const field = this.dmmf.rootFieldMap[rootField!]
+
+      if (!field) {
+        throw new Error(
+          `Could not find rootField ${rootField} for action ${action} for model ${model} on rootType ${operation}`,
+        )
+      }
+
+      const { isList } = field.outputType
+      const typeName = getOutputTypeName(field.outputType.type)
+
+      let document = makeDocument({
+        dmmf: this.dmmf,
+        rootField: rootField!,
+        rootTypeName: operation,
+        select: args,
+      })
+
+      document.validate(args, false, clientMethod, this.errorFormat, callsite)
+
+      document = transformDocument(document)
+
+      // as printJsonWithErrors takes a bit of compute
+      // we only want to do it, if debug is enabled for 'prisma-client'
+      if (Debug.enabled('prisma-client')) {
+        const query = String(document)
+        debug(`Prisma Client call:`)
+        debug(
+          `prisma.${clientMethod}(${printJsonWithErrors({
+            ast: args,
+            keyPaths: [],
+            valuePaths: [],
+            missingItems: [],
+          })})`,
+        )
+        debug(`Generated request:`)
+        debug(query + '\n')
+      }
+
+      return this.fetcher.request({
+        document,
+        clientMethod,
+        typeName,
+        dataPath,
+        isList,
+        rootField: rootField!,
+        callsite,
+        showColors: this.errorFormat === 'pretty',
+        args,
+        engineHook: this._engineMiddlewares[0],
+        runInTransaction,
+        headers,
+      })
     }
 
     private bootstrapClient() {
@@ -607,70 +821,30 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
         const prismaClient = ({
           operation,
           actionName,
-          rootField,
           args,
           dataPath,
-          isList,
+          modelName,
         }) => {
           dataPath = dataPath ?? []
-          isList = isList ?? false
 
-          const callsite =
-            this.errorFormat !== 'minimal' ? new Error().stack : undefined
           const clientMethod = `${lowerCaseModel}.${actionName}`
 
-          let document = makeDocument({
-            dmmf: this.dmmf,
-            rootField,
-            rootTypeName: operation,
-            select: args,
-          })
-
-          document.validate(
-            args,
-            false,
-            `${lowerCaseModel}.${actionName}`,
-            this.errorFormat,
-            callsite,
-          )
-
-          document = transformDocument(document)
-
-          const query = String(document)
-          debug(`Prisma Client call:`)
-          debug(
-            `prisma.${clientMethod}(${printJsonWithErrors({
-              ast: args,
-              keyPaths: [],
-              valuePaths: [],
-              missingItems: [],
-            })})`,
-          )
-          debug(`Generated request:`)
-          debug(query + '\n')
-
           let requestPromise: Promise<any>
+          const callsite = this._getCallsite()
 
-          const collectTimestamps = new CollectTimestamps('PrismaClient')
-
-          const showColors = this.errorFormat && this.errorFormat === 'pretty'
+          const requestModelName = modelName ?? model.name
 
           const clientImplementation = {
             then: (onfulfilled, onrejected) => {
               if (!requestPromise) {
-                requestPromise = this.fetcher.request({
-                  document,
-                  clientMethod,
-                  typeName: mapping.model,
-                  dataPath,
-                  isList,
-                  rootField,
-                  collectTimestamps,
-                  callsite,
-                  showColors,
-                  engineHook: this._engineHookCb,
-                  allHook: this._allHookCb,
+                requestPromise = this._request({
                   args,
+                  dataPath,
+                  action: actionName,
+                  model: requestModelName,
+                  clientMethod,
+                  callsite,
+                  runInTransaction: false,
                 })
               }
 
@@ -678,20 +852,14 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
             },
             requestTransaction: () => {
               if (!requestPromise) {
-                requestPromise = this.fetcher.request({
-                  document,
-                  clientMethod,
-                  typeName: mapping.model,
+                requestPromise = this._request({
+                  args,
                   dataPath,
-                  isList,
-                  rootField,
-                  collectTimestamps,
+                  action: actionName,
+                  model: requestModelName,
+                  clientMethod,
                   callsite,
                   runInTransaction: true,
-                  showColors,
-                  engineHook: this._engineHookCb,
-                  allHook: this._allHookCb,
-                  args,
                 })
               }
 
@@ -699,19 +867,14 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
             },
             catch: (onrejected) => {
               if (!requestPromise) {
-                requestPromise = this.fetcher.request({
-                  document,
-                  clientMethod,
-                  typeName: mapping.model,
-                  dataPath,
-                  isList,
-                  rootField,
-                  collectTimestamps,
-                  callsite,
-                  showColors,
-                  engineHook: this._engineHookCb,
-                  allHook: this._allHookCb,
+                requestPromise = this._request({
                   args,
+                  dataPath,
+                  action: actionName,
+                  model: requestModelName,
+                  clientMethod,
+                  callsite,
+                  runInTransaction: false,
                 })
               }
 
@@ -719,25 +882,19 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
             },
             finally: (onfinally) => {
               if (!requestPromise) {
-                requestPromise = this.fetcher.request({
-                  document,
-                  clientMethod,
-                  typeName: mapping.model,
-                  dataPath,
-                  isList,
-                  rootField,
-                  collectTimestamps,
-                  callsite,
-                  showColors,
-                  engineHook: this._engineHookCb,
-                  allHook: this._allHookCb,
+                requestPromise = this._request({
                   args,
+                  dataPath,
+                  action: actionName,
+                  model: requestModelName,
+                  clientMethod,
+                  callsite,
+                  runInTransaction: false,
                 })
               }
 
               return requestPromise.finally(onfinally)
             },
-            _collectTimestamps: collectTimestamps,
           }
 
           // add relation fields
@@ -754,10 +911,13 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
               return clients[field.type]({
                 operation,
                 actionName,
-                rootField,
                 args: newArgs,
                 dataPath: newDataPath,
                 isList: field.isList,
+                /*
+                 * necessary for user.posts() calls -> the original model name needs to be preserved
+                 */
+                modelName: model.name,
               })
             }
           }
@@ -787,7 +947,6 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
                 clients[mapping.model]({
                   operation,
                   actionName,
-                  rootField,
                   args,
                 })
             }
@@ -797,11 +956,10 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
           {},
         )
 
-        delegate.count = (args) =>
-          clients[mapping.model]({
+        delegate.count = (args) => {
+          return clients[mapping.model]({
             operation: 'query',
-            actionName: 'count', // actionName is just cosmetics 💅🏽
-            rootField: mapping.aggregate,
+            actionName: `aggregate`,
             args: args
               ? {
                   ...args,
@@ -810,6 +968,7 @@ export function getPrismaClient(config: GetPrismaClientOptions): any {
               : undefined,
             dataPath: ['count'],
           })
+        }
 
         delegate.aggregate = (args) => {
           /**
@@ -854,7 +1013,11 @@ export class PrismaClientFetcher {
   prisma: any
   debug: boolean
   hooks: any
-  dataloader: Dataloader<{ document: Document; runInTransaction?: boolean }>
+  dataloader: Dataloader<{
+    document: Document
+    runInTransaction?: boolean
+    headers?: Record<string, string>
+  }>
 
   constructor(prisma, enableDebug = false, hooks?: any) {
     this.prisma = prisma
@@ -870,7 +1033,7 @@ export class PrismaClientFetcher {
       singleLoader: async (request) => {
         const query = String(request.document)
         await this.prisma.connect()
-        return this.prisma.engine.request(query)
+        return this.prisma.engine.request(query, request.headers)
       },
       batchBy: (request) => {
         if (request.runInTransaction) {
@@ -897,19 +1060,19 @@ export class PrismaClientFetcher {
     })
   }
 
-  private async _request({
+  async request({
     document,
     dataPath = [],
     rootField,
     typeName,
     isList,
     callsite,
-    collectTimestamps,
     clientMethod,
     runInTransaction,
     showColors,
     engineHook,
     args,
+    headers,
   }: {
     document: Document
     dataPath: string[]
@@ -918,11 +1081,11 @@ export class PrismaClientFetcher {
     isList: boolean
     clientMethod: string
     callsite?: string
-    collectTimestamps?: CollectTimestamps
     runInTransaction?: boolean
     showColors?: boolean
-    engineHook?: EngineHookCallback
+    engineHook?: EngineMiddleware
     args: any
+    headers?: Record<string, string>
   }) {
     if (this.hooks && this.hooks.beforeRequest) {
       const query = String(document)
@@ -938,25 +1101,25 @@ export class PrismaClientFetcher {
       })
     }
     try {
-      collectTimestamps && collectTimestamps.record('Pre-engine_request')
       /**
        * If there's an engine hook, use it here
        */
       let data, elapsed
       if (engineHook) {
-        const result = await engineHook({
-          params: {
+        const result = await engineHook(
+          {
             document,
             runInTransaction,
           },
-          fetch: (params) => this.dataloader.request(params),
-        })
+          (params) => this.dataloader.request(params),
+        )
         data = result.data
         elapsed = result.elapsed
       } else {
         const result = await this.dataloader.request({
           document,
           runInTransaction,
+          headers,
         })
         data = result.data
         elapsed = result.elapsed
@@ -965,14 +1128,7 @@ export class PrismaClientFetcher {
       /**
        * Unpack
        */
-      collectTimestamps && collectTimestamps.record('Post-engine_request')
-      collectTimestamps && collectTimestamps.record('Pre-unpack')
       const unpackResult = this.unpack(document, data, dataPath, rootField)
-      collectTimestamps && collectTimestamps.record('Post-unpack')
-      collectTimestamps &&
-        collectTimestamps.addResults({
-          engine_request_rust: elapsed,
-        })
       if (process.env.PRISMA_CLIENT_GET_TIME) {
         return { data: unpackResult, elapsed }
       }
@@ -991,6 +1147,7 @@ export class PrismaClientFetcher {
       }
 
       message = this.sanitizeMessage(message)
+      // TODO: Do request with callsite instead, so we don't need to rethrow
       if (e.code) {
         throw new PrismaClientKnownRequestError(message, e.code, e.meta)
       } else if (e.isPanic) {
@@ -1007,55 +1164,6 @@ export class PrismaClientFetcher {
     }
   }
 
-  async request(params: {
-    document: Document
-    dataPath: string[]
-    rootField: string
-    typeName: string
-    isList: boolean
-    clientMethod: string
-    callsite?: string
-    collectTimestamps?: CollectTimestamps
-    runInTransaction?: boolean
-    showColors?: boolean
-    engineHook?: EngineHookCallback
-    allHook?: AllHookCallback
-    args: any
-  }) {
-    if (params.allHook) {
-      const fetch = (userParams) => {
-        return this._request({
-          document: userParams.document,
-          dataPath: userParams.path,
-          rootField: userParams.rootField,
-          typeName: userParams.typeName,
-          isList: userParams.isList,
-          clientMethod: userParams.clientMethod,
-
-          callsite: params.callsite,
-          collectTimestamps: params.collectTimestamps,
-          runInTransaction: params.runInTransaction,
-          showColors: params.showColors,
-          engineHook: params.engineHook,
-          args: params.args,
-        })
-      }
-      return params.allHook({
-        fetch,
-        params: {
-          document: params.document,
-          path: params.dataPath,
-          rootField: params.rootField,
-          typeName: params.typeName,
-          clientMethod: params.clientMethod,
-          query: String(params.document),
-          args: params.args,
-        },
-      })
-    }
-
-    return this._request(params)
-  }
   sanitizeMessage(message) {
     if (this.prisma.errorFormat && this.prisma.errorFormat !== 'pretty') {
       return stripAnsi(message)
@@ -1072,49 +1180,6 @@ export class PrismaClientFetcher {
     }
     getPath.push(...path.filter((p) => p !== 'select' && p !== 'include'))
     return unpack({ document, data, path: getPath })
-  }
-}
-
-class CollectTimestamps {
-  records: any[]
-  start: any
-  additionalResults: any
-  constructor(startName) {
-    this.records = []
-    this.start = undefined
-    this.additionalResults = {}
-    this.start = { name: startName, value: process.hrtime() }
-  }
-  record(name) {
-    this.records.push({ name, value: process.hrtime() })
-  }
-  elapsed(start, end) {
-    const diff = [end[0] - start[0], end[1] - start[1]]
-    const nanoseconds = diff[0] * 1e9 + diff[1]
-    const milliseconds = nanoseconds / 1e6
-    return milliseconds
-  }
-  addResults(results) {
-    Object.assign(this.additionalResults, results)
-  }
-  getResults() {
-    const results = this.records.reduce((acc, record) => {
-      const name = record.name.split('-')[1]
-      if (acc[name]) {
-        acc[name] = this.elapsed(acc[name], record.value)
-      } else {
-        acc[name] = record.value
-      }
-      return acc
-    }, {})
-    Object.assign(results, {
-      total: this.elapsed(
-        this.start.value,
-        this.records[this.records.length - 1].value,
-      ),
-      ...this.additionalResults,
-    })
-    return results
   }
 }
 

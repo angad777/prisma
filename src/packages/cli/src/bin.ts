@@ -52,39 +52,54 @@ if (process.argv.length > 2) {
   // Parse CLI arguments and look for --schema
   const args = arg(process.argv.slice(3), { '--schema': String }, false, true)
 
-  // Check --schema directory
+  let message
+
+  // 1 -Check --schema directory
   if (args && args['--schema']) {
     const dotenvFilepath = path.join(path.dirname(args['--schema']), '.env')
 
     if (fs.existsSync(args['--schema']) && fs.existsSync(dotenvFilepath)) {
       dotenvResult = dotenv.config({ path: dotenvFilepath })
-      console.log(
-        chalk.dim(
-          'Environment variables loaded from provided --schema directory',
-        ),
+      message = chalk.dim(
+        'Environment variables loaded from provided --schema directory',
       )
     } else {
       debug('Environment variables not loaded (--schema was provided)')
     }
-  } // Check current directory
-  else if (fs.existsSync('.env')) {
+  }
+  // 2 - Check ./prisma directory for schema.prisma
+  else if (
+    fs.existsSync('prisma/schema.prisma') &&
+    fs.existsSync('prisma/.env')
+  ) {
+    dotenvResult = dotenv.config({ path: 'prisma/.env' })
+    // needed for Windows
+    const relative = path.relative('.', './prisma/.env')
+    message = chalk.dim(`Environment variables loaded from ${relative}`)
+  }
+  // 3 - Check current directory for schema.prisma
+  else if (fs.existsSync('schema.prisma') && fs.existsSync('.env')) {
     dotenvResult = dotenv.config()
-    console.log(
-      chalk.dim('Environment variables loaded from current directory'),
-    )
-  } // Check ./prisma directory
+    message = chalk.dim('Environment variables loaded from current directory')
+  }
+  // 4 - Check if ./prisma/.env exist and load it (we could not find a schema.prisma)
   else if (fs.existsSync('prisma/.env')) {
     dotenvResult = dotenv.config({ path: 'prisma/.env' })
     // needed for Windows
     const relative = path.relative('.', './prisma/.env')
-    console.log(chalk.dim(`Environment variables loaded from ${relative}`))
-  } // We didn't find a .env file next to the prisma.schema file.
+    message = chalk.dim(`Environment variables loaded from ${relative}`)
+  }
+  // 5 - We didn't find a .env file next to the prisma.schema file.
   else {
     debug('Environment variables not loaded')
   }
   // Print the error if any (if internal dotenv readFileSync throws)
   if (dotenvResult && dotenvResult.error) {
-    console.error(chalk.redBright.bold('Error: ') + dotenvResult.error)
+    message = chalk.redBright.bold('Error: ') + dotenvResult.error
+  }
+
+  if (message && !process.env.PRISMA_GENERATE_IN_POSTINSTALL) {
+    console.error(message)
   }
 }
 
@@ -99,6 +114,8 @@ import {
   MigrateDown,
   MigrateTmpPrepare,
   StudioCommand,
+  SchemaCommand,
+  SchemaPush,
   handlePanic,
 } from '@prisma/migrate'
 import { CLI } from './CLI'
@@ -109,7 +126,6 @@ import { Generate } from './Generate'
 import { ProviderAliases } from '@prisma/sdk'
 import { Validate } from './Validate'
 import * as checkpoint from 'checkpoint-client'
-import ci from '@prisma/ci-info'
 import { Format } from './Format'
 import { Doctor } from './Doctor'
 
@@ -151,6 +167,9 @@ async function main(): Promise<number> {
       validate: Validate.new(),
       format: Format.new(),
       doctor: Doctor.new(),
+      schema: SchemaCommand.new({
+        push: SchemaPush.new(),
+      }),
     },
     [
       'version',
@@ -163,10 +182,12 @@ async function main(): Promise<number> {
       'generate',
       'validate',
       'format',
+      'schema',
     ],
   )
   // parse the arguments
   const result = await cli.parse(process.argv.slice(2))
+
   if (result instanceof HelpError) {
     console.error(result.message)
     return 1
@@ -176,32 +197,39 @@ async function main(): Promise<number> {
   }
   console.log(result)
 
-  // SHA256 identifier for the project based on the prisma schema path
-  const projectPathHash = await getProjectHash()
-  // SHA256 of the cli path
-  const cliPathHash = getCLIPathHash()
+  try {
+    // SHA256 identifier for the project based on the prisma schema path
+    const projectPathHash = await getProjectHash()
+    // SHA256 of the cli path
+    const cliPathHash = getCLIPathHash()
 
-  // check prisma for updates
-  const checkResult = await checkpoint.check({
-    product: 'prisma',
-    cli_path_hash: cliPathHash,
-    project_hash: projectPathHash,
-    version: packageJson.version,
-    disable: ci.isCI,
-  })
-  // if the result is cached and we're outdated, show this prompt
-  const shouldHide = process.env.PRISMA_HIDE_UPDATE_MESSAGE
-  if (checkResult.status === 'ok' && checkResult.data.outdated && !shouldHide) {
-    console.error(
-      drawBox({
-        height: 4,
-        width: 59,
-        str: `\n${chalk.blue('Update available')} ${packageJson.version} -> ${
-          checkResult.data.current_version
-        }\nRun ${chalk.bold(checkResult.data.install_command)} to update`,
-        horizontalPadding: 2,
-      }),
-    )
+    // check prisma for updates
+    const checkResult = await checkpoint.check({
+      product: 'prisma',
+      cli_path_hash: cliPathHash,
+      project_hash: projectPathHash,
+      version: packageJson.version,
+    })
+    // if the result is cached and we're outdated, show this prompt
+    const shouldHide = process.env.PRISMA_HIDE_UPDATE_MESSAGE
+    if (
+      checkResult.status === 'ok' &&
+      checkResult.data.outdated &&
+      !shouldHide
+    ) {
+      console.error(
+        drawBox({
+          height: 4,
+          width: 59,
+          str: `\n${chalk.blue('Update available')} ${packageJson.version} -> ${
+            checkResult.data.current_version
+          }\nRun ${chalk.bold(checkResult.data.install_command)} to update`,
+          horizontalPadding: 2,
+        }),
+      )
+    }
+  } catch (e) {
+    debug(e)
   }
 
   return 0
@@ -234,6 +262,7 @@ if (require.main === module) {
             } else {
               console.error(chalk.redBright.bold('Error: ') + e.message)
             }
+            process.exit(1)
           })
         } else {
           if (debugLib.enabled('prisma')) {

@@ -5,6 +5,13 @@ module.exports = async () => {
   const prisma = new PrismaClient()
 
   const result = await prisma.user.aggregate({
+    where: {
+      age: {
+        gt: -1,
+      },
+    },
+    skip: 0,
+    take: 10000,
     avg: {
       age: true,
     },
@@ -15,13 +22,17 @@ module.exports = async () => {
     min: {
       age: true,
     },
+    sum: {
+      age: true,
+    },
   })
 
   assert.deepEqual(result, {
-    avg: { age: 80 },
     count: 10,
+    avg: { age: 80 },
     max: { age: 163 },
     min: { age: 5 },
+    sum: { age: 800 },
   })
 
   prisma.disconnect()

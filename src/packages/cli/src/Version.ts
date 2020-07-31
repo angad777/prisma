@@ -1,6 +1,15 @@
-import { Command, getVersion, resolveBinary, arg } from '@prisma/sdk'
+import {
+  Command,
+  getVersion,
+  resolveBinary,
+  arg,
+  getSchemaPath,
+  getSchema,
+  getConfig,
+} from '@prisma/sdk'
 import { getPlatform } from '@prisma/get-platform'
 import fs from 'fs'
+import path from 'path'
 const packageJson = require('../package.json') // eslint-disable-line @typescript-eslint/no-var-requires
 
 interface BinaryInfo {
@@ -53,12 +62,42 @@ export class Version implements Command {
       ['Format Binary', this.printBinaryInfo(fmtBinary)],
     ]
 
+    const featureFlags = await this.getFeatureFlags()
+    if (featureFlags && featureFlags.length > 0) {
+      rows.push(['Preview Features', featureFlags.join(', ')])
+    }
+
     return this.printTable(rows, args['--json'])
   }
 
-  private printBinaryInfo({ path, version, fromEnvVar }: BinaryInfo): string {
+  private async getFeatureFlags(): Promise<string[]> {
+    try {
+      const datamodel = await getSchema()
+      const config = await getConfig({
+        datamodel,
+      })
+      const generator = config.generators.find(
+        (g) => g.previewFeatures.length > 0,
+      )
+      if (generator) {
+        return generator.previewFeatures
+      }
+    } catch (e) {
+      // console.error(e)
+    }
+    return []
+  }
+
+  private printBinaryInfo({
+    path: absolutePath,
+    version,
+    fromEnvVar,
+  }: BinaryInfo): string {
     const resolved = fromEnvVar ? `, resolved by ${fromEnvVar}` : ''
-    return `${version} (at ${path}${resolved})`
+    return `${version} (at ${path.relative(
+      process.cwd(),
+      absolutePath,
+    )}${resolved})`
   }
 
   private async resolveEngine(

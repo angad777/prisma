@@ -47,6 +47,7 @@ export class Introspect implements Command {
     ${chalk.bold('Flags')}
 
       --experimental-reintrospection   Enables the experimental re-introspection feature
+      --clean                          Ignore current schema.prisma file when using the re-introspection feature
   `)
 
   private printUrlAsDatasource(url: string): string {
@@ -71,6 +72,7 @@ export class Introspect implements Command {
       '--print': Boolean,
       '--schema': String,
       '--experimental-reintrospection': Boolean,
+      '--clean': Boolean,
     })
 
     const log = (...messages): void => {
@@ -91,9 +93,9 @@ export class Introspect implements Command {
     let schemaPath = await getSchemaPath(args['--schema'])
     if (!url && !schemaPath) {
       throw new Error(
-        `Either provide ${chalk.greenBright(
-          '--schema',
-        )} or make sure that you are in a folder with a ${chalk.greenBright(
+        `Either provide ${chalk.greenBright('--schema')} ${chalk.bold(
+          'or',
+        )} make sure that you are in a folder with a ${chalk.greenBright(
           'schema.prisma',
         )} file.`,
       )
@@ -126,11 +128,11 @@ export class Introspect implements Command {
     let introspectionSchema = ''
     let introspectionWarnings: IntrospectionWarnings[]
     let introspectionSchemaVersion: IntrospectionSchemaVersion
-    const enableReintrospection = args['--experimental-reintrospection']
     try {
       const introspectionResult = await engine.introspect(
         schema,
-        enableReintrospection,
+        args['--experimental-reintrospection'],
+        args['--clean']
       )
       introspectionSchema = introspectionResult.datamodel
       introspectionWarnings = introspectionResult.warnings
