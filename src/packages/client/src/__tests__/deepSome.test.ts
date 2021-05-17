@@ -35,14 +35,20 @@ describe('minimal where transformation', () => {
     })
 
     expect(transformedDocument).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
-          posts_some: {
-            author: {
-              posts_some: {
-                author: {
-                  posts_some: {
-                    id: \\"5\\"
+          posts: {
+            some: {
+              author: {
+                posts: {
+                  some: {
+                    author: {
+                      posts: {
+                        some: {
+                          id: "5"
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -53,8 +59,17 @@ describe('minimal where transformation', () => {
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }"
+      }
     `)
   })
 })

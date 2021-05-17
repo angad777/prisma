@@ -42,21 +42,31 @@ describe('minimal where transformation', () => {
     })
 
     expect(transformedDocument).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
-          likedArticles_some: {
-            likedBy_some: {
-              AND: [
-                {
-                  likedArticles_some: {
-                    likedBy_some: {
-                      likedArticles_some: {
-                        title_contains: \\"A string\\"
+          likedArticles: {
+            some: {
+              likedBy: {
+                some: {
+                  AND: {
+                    likedArticles: {
+                      some: {
+                        likedBy: {
+                          some: {
+                            likedArticles: {
+                              some: {
+                                title: {
+                                  contains: "A string"
+                                }
+                              }
+                            }
+                          }
+                        }
                       }
                     }
                   }
                 }
-              ]
+              }
             }
           }
         }) {
@@ -65,7 +75,7 @@ describe('minimal where transformation', () => {
           email
           personaId
         }
-      }"
+      }
     `)
   })
 })

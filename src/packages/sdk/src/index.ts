@@ -1,69 +1,79 @@
-export { pick } from './pick'
-
-export { keyBy } from './keyBy'
-
-export { resolveBinary } from './resolveBinary'
-
-export { missingGeneratorMessage } from './utils/missingGeneratorMessage'
-
+export {
+  getRelativeSchemaPath,
+  getSchema,
+  getSchemaDir,
+  getSchemaDirSync,
+  getSchemaPath,
+  getSchemaPathFromPackageJson,
+  getSchemaPathFromPackageJsonSync,
+  getSchemaPathSync,
+  getSchemaSync,
+} from './cli/getSchema'
+export { getCLIPathHash, getProjectHash } from './cli/hashes'
+export { HelpError, unknownCommand } from './cli/Help'
+export {
+  Command,
+  Commands,
+  CompiledGeneratorDefinition,
+  Dictionary,
+  GeneratorConfig,
+  GeneratorDefinition,
+  GeneratorDefinitionWithPackage,
+  GeneratorFunction,
+  GeneratorOptions,
+} from './cli/types'
+export { arg, format, isError } from './cli/utils'
+export { credentialsToUri, uriToCredentials } from './convertCredentials'
+export { drawBox } from './drawBox'
+export {
+  ConfigMetaFormat,
+  formatSchema,
+  getConfig,
+  getDMMF,
+  GetDMMFOptions,
+  getVersion,
+} from './engineCommands'
+export { Generator } from './Generator'
+export { getCommandWithExecutor } from './getCommandWithExecutor'
+export { getGenerator, getGenerators, ProviderAliases } from './getGenerators'
+export { getPackedPackage } from './getPackedPackage'
 export {
   highlightDatamodel,
   highlightSql,
   highlightTS,
 } from './highlight/highlight'
-
 export {
   IntrospectionEngine,
-  IntrospectionWarnings,
   IntrospectionSchemaVersion,
+  IntrospectionWarnings,
 } from './IntrospectionEngine'
-export { Generator } from './Generator'
-export { getGenerators, getGenerator, ProviderAliases } from './getGenerators'
-export {
-  getDMMF,
-  getConfig,
-  GetDMMFOptions,
-  ConfigMetaFormat,
-  getVersion,
-  formatSchema,
-} from './engineCommands'
-export { getPackedPackage } from './getPackedPackage'
-export { GeneratorPaths } from './predefinedGeneratorResolvers'
-export { DatabaseCredentials } from './types'
-export { credentialsToUri, uriToCredentials } from './convertCredentials'
-export { RustPanic, ErrorArea } from './panic'
+export { isCi } from './isCi'
+export { isCurrentBinInstalledGlobally } from './isCurrentBinInstalledGlobally'
+export { keyBy } from './keyBy'
 export { link } from './link'
+export * as logger from './logger'
+export {
+  canConnectToDatabase,
+  createDatabase,
+  dropDatabase,
+} from './migrateEngineCommands'
+export { ErrorArea, RustPanic } from './panic'
+export { pick } from './pick'
+export { GeneratorPaths } from './predefinedGeneratorResolvers'
+export { engineEnvVarMap, EngineType, resolveBinary } from './resolveBinary'
 export { sendPanic } from './sendPanic'
-export { maskSchema } from './utils/maskSchema'
-export { drawBox } from './drawBox'
-
-export { HelpError, unknownCommand } from './cli/Help'
-export {
-  Command,
-  Commands,
-  GeneratorFunction,
-  GeneratorConfig,
-  GeneratorDefinition,
-  GeneratorDefinitionWithPackage,
-  GeneratorOptions,
-  Dictionary,
-  CompiledGeneratorDefinition,
-} from './cli/types'
-export { getCLIPathHash, getProjectHash } from './cli/hashes'
-export { arg, format, isError } from './cli/utils'
-export {
-  getSchemaPath,
-  getSchemaDir,
-  getSchema,
-  getSchemaPathSync,
-  getSchemaSync,
-  getSchemaDirSync,
-} from './cli/getSchema'
-
+export { DatabaseCredentials } from './types'
 export { extractPreviewFeatures } from './utils/extractPreviewFeatures'
+export { getEnvPaths } from './utils/getEnvPaths'
 export { mapPreviewFeatures } from './utils/mapPreviewFeatures'
+export { maskSchema } from './utils/maskSchema'
+export { missingGeneratorMessage } from './utils/missingGeneratorMessage'
+export { printConfigWarnings } from './utils/printConfigWarnings'
+export { parseEnvValue } from './utils/parseEnvValue'
+
 export {
-  trimBlocksFromSchema,
   Position,
+  trimBlocksFromSchema,
   trimNewLine,
 } from './utils/trimBlocksFromSchema'
+export { tryLoadEnvs } from './utils/tryLoadEnvs'

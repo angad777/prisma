@@ -1,6 +1,6 @@
 import { recommender } from '../fixtures/recommender'
-import { DMMFClass, makeDocument } from '../runtime'
 import { getDMMF } from '../generation/getDMMF'
+import { DMMFClass, makeDocument } from '../runtime'
 
 let dmmf
 describe('no args', () => {
@@ -8,12 +8,12 @@ describe('no args', () => {
     dmmf = new DMMFClass(await getDMMF({ datamodel: recommender }))
   })
 
-  test('findOne', () => {
+  test('findUnique', () => {
     const document = makeDocument({
       dmmf,
       select: undefined,
       rootTypeName: 'query',
-      rootField: 'findOneUser',
+      rootField: 'findUniqueUser',
     })
     expect(() =>
       document.validate(undefined, false, 'user', 'colorless'),
@@ -29,17 +29,17 @@ describe('no args', () => {
     })
     document.validate(undefined, false, 'user', 'colorless')
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser {
           id
           name
           email
           personaId
         }
-      }"
+      }
     `)
   })
-  test('findMany', () => {
+  test('findMany with filter', () => {
     const select = {
       where: {
         likedArticles: null,
@@ -51,18 +51,20 @@ describe('no args', () => {
       rootTypeName: 'query',
       rootField: 'findManyUser',
     })
-    document.validate(select, false, 'user', 'colorless')
+    expect(() =>
+      document.validate(select, false, 'user', 'colorless'),
+    ).toThrowErrorMatchingSnapshot()
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
-
+          likedArticles: null
         }) {
           id
           name
           email
           personaId
         }
-      }"
+      }
     `)
   })
   test('createOne', () => {
@@ -85,11 +87,11 @@ describe('no args', () => {
     })
     document.validate(undefined, false, 'user', 'colorless')
     expect(String(document)).toMatchInlineSnapshot(`
-      "mutation {
+      mutation {
         deleteManyUser {
           count
         }
-      }"
+      }
     `)
   })
   test('deleteOne', () => {

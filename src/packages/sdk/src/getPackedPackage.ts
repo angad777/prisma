@@ -4,14 +4,18 @@ import tempy from 'tempy'
 import fs from 'fs'
 import resolvePkg from 'resolve-pkg'
 import tar from 'tar'
-import copy from '@apexearth/copy'
+import copy from '@timsuchanek/copy'
 import makeDir from 'make-dir'
 import { promisify } from 'util'
 import rimraf from 'rimraf'
 import readPkgUp from 'read-pkg-up'
+import { quote } from 'shell-quote'
+import { hasYarn } from './utils/hasYarn'
 
 // why not directly use Sindre's 'del'? Because it's not ncc-able :/
 const del = promisify(rimraf)
+const readdir = promisify(fs.readdir)
+const rename = promisify(fs.rename)
 
 export async function getPackedPackage(
   name: string,
@@ -44,11 +48,29 @@ export async function getPackedPackage(
   const tmpDir = tempy.directory() // thanks Sindre
   const archivePath = path.join(tmpDir, `package.tgz`)
 
+  // Check if yarn is available.
+  const isYarn = await hasYarn(packageDir)
+
+  const packCmd = isYarn
+    ? ['yarn', 'pack', '-f', archivePath]
+    : ['npm', 'pack', packageDir]
+
+  // shell-quote args
+  const escapedCmd = quote(packCmd)
+
   // pack into a .tgz in a tmp dir
-  await execa.command(`yarn pack -f ${archivePath}`, {
+  await execa.command(escapedCmd, {
     shell: true,
-    cwd: packageDir,
+    cwd: isYarn ? packageDir : tmpDir, // for npm pack it outputs a file to the cwd
   })
+
+  if (!isYarn) {
+    // since npm pack does not have option to specify a filename we change it here
+    // find single tgz in temp folder
+    const filename = (await readdir(tmpDir))[0]
+    // rename it to match expected filename
+    await rename(path.join(tmpDir, filename), archivePath)
+  }
 
   // extract and delete the archive
   await tar.extract({

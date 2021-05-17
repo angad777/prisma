@@ -1,15 +1,18 @@
-import resolvePkg from 'resolve-pkg'
-import chalk from 'chalk'
-import hasYarn from 'has-yarn'
-import execa from 'execa'
-import path from 'path'
-import fs from 'fs'
 import Debug from '@prisma/debug'
+import chalk from 'chalk'
+import execa from 'execa'
+import fs from 'fs'
+import hasYarn from 'has-yarn'
+import path from 'path'
+import resolvePkg from 'resolve-pkg'
+import { logger } from '.'
+import { getCommandWithExecutor } from './getCommandWithExecutor'
 const debugEnabled = Debug.enabled('generator')
 
 export type GeneratorPaths = {
   outputPath: string
   generatorPath: string
+  isNode?: boolean
 }
 
 export type GeneratorResolver = (
@@ -35,13 +38,13 @@ export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
   )} with ${chalk.green(
       "import { PrismaClient } from '@prisma/client'",
     )} in your code.
-  4. Run ${chalk.green('prisma generate')} again.
+  4. Run ${chalk.green(getCommandWithExecutor('prisma generate'))} again.
       `)
   },
   'prisma-client-js': async (baseDir, version) => {
     let prismaClientDir = resolvePkg('@prisma/client', { cwd: baseDir })
     checkYarnVersion()
-
+    checkTypeScriptVersion()
     if (debugEnabled) {
       console.log({ prismaClientDir })
     }
@@ -72,7 +75,7 @@ export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
         console.info(`✔ Created ${chalk.bold.green('./package.json')}`)
       }
 
-      await installPackage(baseDir, `-D @prisma/cli@${version ?? 'latest'}`)
+      await installPackage(baseDir, `-D prisma@${version ?? 'latest'}`)
       await installPackage(baseDir, `@prisma/client@${version ?? 'latest'}`)
 
       prismaClientDir = resolvePkg('@prisma/client', { cwd: baseDir })
@@ -82,7 +85,9 @@ export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
           `Could not resolve @prisma/client despite the installation that we just tried.
 Please try to install it by hand with ${chalk.bold.greenBright(
             'npm install @prisma/client',
-          )} and rerun ${chalk.bold('prisma generate')} 🙏.`,
+          )} and rerun ${chalk.bold(
+            getCommandWithExecutor('prisma generate'),
+          )} 🙏.`,
         )
       }
 
@@ -95,19 +100,19 @@ Please try to install it by hand with ${chalk.bold.greenBright(
 
     if (!prismaClientDir) {
       throw new Error(
-        `Could not resolve @prisma/client. 
+        `Could not resolve @prisma/client.
 Please try to install it with ${chalk.bold.greenBright(
           'npm install @prisma/client',
-        )} and rerun ${chalk.bold('prisma generate')} 🙏.`,
+        )} and rerun ${chalk.bold(
+          getCommandWithExecutor('prisma generate'),
+        )} 🙏.`,
       )
     }
 
     return {
       outputPath: prismaClientDir,
-      generatorPath: `node --max-old-space-size=8096 "${path.resolve(
-        prismaClientDir,
-        'generator-build/index.js',
-      )}"`,
+      generatorPath: path.resolve(prismaClientDir, 'generator-build/index.js'),
+      isNode: true,
     }
   },
 }
@@ -121,14 +126,16 @@ async function installPackage(baseDir: string, pkg: string): Promise<void> {
     cwd: baseDir,
     stdio: 'inherit',
     env: {
-      ...process.env,
-      SKIP_GENERATE: 'true',
+      PRISMA_SKIP_POSTINSTALL_GENERATE: 'true',
     },
   })
 }
 
 /**
  * Warn, if yarn is older than 1.19.2
+ * Because Yarn used to remove all dot folders inside node_modules before.
+ * We use node_modules/.prisma/client directory as default location for generated Prisma Client.
+ * Changelog https://github.com/yarnpkg/yarn/blob/HEAD/CHANGELOG.md#1192
  */
 function checkYarnVersion() {
   if (process.env.npm_config_user_agent) {
@@ -139,8 +146,8 @@ function checkYarnVersion() {
         const currentYarnVersion = `${major}.${minor}.${patch}`
         const minYarnVersion = '1.19.2'
         if (semverLt(currentYarnVersion, minYarnVersion)) {
-          console.error(
-            `${chalk.yellow('warning')} Your ${chalk.bold(
+          logger.warn(
+            `Your ${chalk.bold(
               'yarn',
             )} has version ${currentYarnVersion}, which is outdated. Please update it to ${chalk.bold(
               minYarnVersion,
@@ -152,6 +159,32 @@ function checkYarnVersion() {
   }
 }
 
+/**
+ * Warn, if typescript is below `4.1.0` or if it is not install locally or globally
+ * Because Template Literal Types are required for generating Prisma Client types.
+ */
+function checkTypeScriptVersion() {
+  const minVersion = '4.1.0'
+  try {
+    const output = execa.sync('tsc', ['-v'], {
+      preferLocal: true,
+    })
+    if (output.stdout) {
+      const currentVersion = output.stdout.split(' ')[1]
+      if (semverLt(currentVersion, minVersion)) {
+        throw new Error(
+          `Your ${chalk.bold(
+            'typescript',
+          )} version is ${currentVersion}, which is outdated. Please update it to ${chalk.bold(
+            minVersion,
+          )} or ${chalk.bold('newer')} in order to use Prisma Client.`,
+        )
+      }
+    }
+  } catch (e) {
+    // They do not have TS installed, we ignore (example: JS project)
+  }
+}
 /**
  * Returns true, if semver version `a` is lower than `b`
  * Note: This obviously doesn't support the full semver spec.

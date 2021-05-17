@@ -6,7 +6,6 @@ test('ignore comments', () => {
     provider = "sqlite"
     // url = "file:another/wrong/folder/dev.db"
     url      = "file:my/folder/dev.db"
-    default  = true
   }
 
   generator client {
@@ -44,19 +43,19 @@ test('ignore comments', () => {
   expect(result).toMatchInlineSnapshot(`
     Array [
       Object {
-        "name": "db",
-        "url": "../cwd/my/folder/dev.db",
+        name: db,
+        url: ../cwd/my/folder/dev.db,
       },
     ]
   `)
 
   expect(serializeDatasources(result)).toMatchInlineSnapshot(`
-    "[
+    [
       {
-        \\"name\\": \\"db\\",
-        \\"url\\": \\"../cwd/my/folder/dev.db\\"
+        "name": "db",
+        "url": "../cwd/my/folder/dev.db"
       }
-    ]"
+    ]
   `)
 })
 
@@ -64,7 +63,7 @@ test('basic happy path', () => {
   const datamodel = `datasource db {
     provider = "sqlite"
     url      = "file:my/folder/dev.db"
-    default  = true
+    
   }
 
   generator client {
@@ -102,18 +101,18 @@ test('basic happy path', () => {
   expect(result).toMatchInlineSnapshot(`
     Array [
       Object {
-        "name": "db",
-        "url": "../cwd/my/folder/dev.db",
+        name: db,
+        url: ../cwd/my/folder/dev.db,
       },
     ]
   `)
 
   expect(serializeDatasources(result)).toMatchInlineSnapshot(`
-    "[
+    [
       {
-        \\"name\\": \\"db\\",
-        \\"url\\": \\"../cwd/my/folder/dev.db\\"
+        "name": "db",
+        "url": "../cwd/my/folder/dev.db"
       }
-    ]"
+    ]
   `)
 })

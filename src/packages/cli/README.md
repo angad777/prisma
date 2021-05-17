@@ -1,55 +1,41 @@
-# Prisma CLI
+# Prisma CLI &middot; [![npm version](https://img.shields.io/npm/v/prisma.svg?style=flat)](https://www.npmjs.com/package/prisma) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/prisma/prisma/blob/master/CONTRIBUTING.md) [![GitHub license](https://img.shields.io/badge/license-Apache%202-blue)](https://github.com/prisma/prisma/blob/master/LICENSE) [![Slack](https://img.shields.io/badge/chat-on%20slack-blue.svg)](https://slack.prisma.io/)
 
 Learn more about Prisma in the [docs](https://www.prisma.io/docs/).
 
 ## Getting started
 
-Check out the [**"Getting Started"-guide**](https://www.prisma.io/docs/getting-started/quickstart) to get started with Prisma.
+Check out the [**Getting Started Quickstart**](https://www.prisma.io/docs/getting-started/quickstart).
 
 ## Installation
 
-The Prisma CLI currently requires [Node.js 10](https://nodejs.org/en/download/releases/) (or higher).
+The Prisma CLI currently requires Node.js 10.4 (or higher).
+We recommend using [the latest Node.js LTS ("long-term support") release.](https://nodejs.org/en/about/releases/)
 
 ### npm
 
 ```
-npm install @prisma/cli --save-dev
+npm install prisma --save-dev
 ```
 
 ### Yarn
 
 ```
-yarn add @prisma/cli --dev
+yarn add prisma --dev
 ```
 
-## General
+[Check out the docs for more information.](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-cli/installation)
 
-### `prisma init`
+## CLI Reference
 
-Sets up a `prisma/schema.prisma` file in the current directory.
+[Check out the docs for Prisma CLI commands, arguments, and options.](https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-cli/command-reference)
 
-### `prisma generate`
+## Contributing
 
-Invokes the generators specified in the Prisma project file.
+Refer to our [contribution guidelines](https://github.com/prisma/prisma/blob/master/CONTRIBUTING.md) and [Code of Conduct for contributors](https://github.com/prisma/prisma/blob/master/CODE_OF_CONDUCT.md).
 
-### `prisma generate --watch`
+## Build Status
 
-Watches the Prisma project file and runs `generate` when the file changes.
-
-### `prisma introspect`
-
-Introspects the database and generates a data model from it.
-
-## Migrate
-
-### `prisma migrate save --experimental`
-
-Creates a new migration folder based on current data model changes.
-
-### `prisma migrate up --experimental`
-
-Apply any migrations that have not been applied yet.
-
-### `prisma migrate down --experimental`
-
-Undo migrations.
+- Prisma Tests Status:  
+  [![Build status](https://badge.buildkite.com/590e1981074b70961362481ad8319a831b44a38c5d468d6408.svg?branch=master)](https://buildkite.com/prisma/prisma2-test)
+- E2E Tests Status:  
+  [![Actions Status](https://github.com/prisma/prisma2-e2e-tests/workflows/test/badge.svg)](https://github.com/prisma/prisma2-e2e-tests/actions)

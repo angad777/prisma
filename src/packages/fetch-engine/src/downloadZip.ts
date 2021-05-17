@@ -9,7 +9,7 @@ import Debug from '@prisma/debug'
 import hasha from 'hasha'
 import { promisify } from 'util'
 import rimraf from 'rimraf'
-const debug = Debug('downloadZip')
+const debug = Debug('prisma:downloadZip')
 const del = promisify(rimraf)
 
 export type DownloadResult = {
@@ -25,15 +25,15 @@ async function fetchSha256(
   // "3c82ee6cd9fedaec18a5e7cd3fc41f8c6b3dd32575dc13443d96aab4bd018411  query-engine.gz\n"
   // So we split it by whitespace and just get the hash, as that's what we're interested in
   const [zippedSha256, sha256] = [
-    (await fetch(`${url}.sha256`, {
-      agent: getProxyAgent(url)
-    }).then((res) => res.text())).split(/\s+/)[0],
+    (
+      await fetch(`${url}.sha256`, {
+        agent: getProxyAgent(url) as any,
+      }).then((res) => res.text())
+    ).split(/\s+/)[0],
     (
       await fetch(`${url.slice(0, url.length - 3)}.sha256`, {
-         agent:  getProxyAgent(url.slice(0, url.length - 3))
-      }).then((res) =>
-        res.text(),
-      )
+        agent: getProxyAgent(url.slice(0, url.length - 3)) as any,
+      }).then((res) => res.text())
     ).split(/\s+/)[0],
   ]
 
@@ -53,7 +53,7 @@ export async function downloadZip(
       try {
         const resp = await fetch(url, {
           compress: false,
-          agent: getProxyAgent(url),
+          agent: getProxyAgent(url) as any,
         })
 
         if (resp.status !== 200) {
@@ -61,7 +61,7 @@ export async function downloadZip(
         }
 
         const lastModified = resp.headers.get('last-modified')!
-        const size = parseFloat(resp.headers.get('content-length'))
+        const size = parseFloat(resp.headers.get('content-length') as string)
         const ws = fs.createWriteStream(partial)
 
         // eslint-disable-next-line @typescript-eslint/no-misused-promises, no-async-promise-executor

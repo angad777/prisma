@@ -1,46 +1,55 @@
 import {
+  arg,
   Command,
   format,
-  HelpError,
-  getSchemaPath,
-  arg,
   formatSchema,
+  getDMMF,
+  getSchemaPath,
+  HelpError,
 } from '@prisma/sdk'
 import chalk from 'chalk'
-import { getDMMF } from '@prisma/sdk'
 import fs from 'fs'
 import os from 'os'
+import path from 'path'
 import { formatms } from './utils/formatms'
 
 /**
- * $ prisma validate
+ * $ prisma format
  */
 export class Format implements Command {
   public static new(): Format {
     return new Format()
   }
 
-  // static help template
   private static help = format(`
-    Format a Prisma schema.
+Format a Prisma schema.
 
-    ${chalk.bold('Usage')}
+${chalk.bold('Usage')}
 
-    With an existing schema.prisma:
-      ${chalk.dim('$')} prisma format
+  ${chalk.dim('$')} prisma format [options]
 
-    Or specify a schema:
-      ${chalk.dim('$')} prisma format --schema=./schema.prisma
+${chalk.bold('Options')}
+
+  -h, --help   Display this help message
+    --schema   Custom path to your Prisma schema
+
+${chalk.bold('Examples')}
+
+With an existing Prisma schema
+  ${chalk.dim('$')} prisma format
+
+Or specify a Prisma schema path
+  ${chalk.dim('$')} prisma format --schema=./schema.prisma
 
   `)
 
-  // parse arguments
   public async parse(argv: string[]): Promise<string | Error> {
     const before = Date.now()
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--schema': String,
+      '--telemetry-information': String,
     })
 
     if (args instanceof Error) {
@@ -55,22 +64,28 @@ export class Format implements Command {
 
     if (!schemaPath) {
       throw new Error(
-        `Either provide ${chalk.greenBright('--schema')} ${chalk.bold(
-          'or',
-        )} make sure that you are in a folder with a ${chalk.greenBright(
+        `Could not find a ${chalk.bold(
           'schema.prisma',
-        )} file.`,
+        )} file that is required for this command.\nYou can either provide it with ${chalk.greenBright(
+          '--schema',
+        )}, set it as \`prisma.schema\` in your package.json or put it into the default location ${chalk.greenBright(
+          './prisma/schema.prisma',
+        )} https://pris.ly/d/prisma-schema-location`,
       )
     }
 
-    const schema = fs.readFileSync(schemaPath, 'utf-8')
-
-    await getDMMF({
-      datamodel: schema,
-    })
+    console.log(
+      chalk.dim(
+        `Prisma schema loaded from ${path.relative(process.cwd(), schemaPath)}`,
+      ),
+    )
 
     let output = await formatSchema({
       schemaPath,
+    })
+
+    await getDMMF({
+      datamodel: output,
     })
 
     output = output.trimEnd() + os.EOL
@@ -83,7 +98,6 @@ export class Format implements Command {
     )} 🚀`
   }
 
-  // help message
   public help(error?: string): string | HelpError {
     if (error) {
       return new HelpError(`\n${chalk.bold.red(`!`)} ${error}\n${Format.help}`)

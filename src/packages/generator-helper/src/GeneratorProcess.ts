@@ -1,10 +1,16 @@
-import { ChildProcessByStdio } from 'child_process'
+import { ChildProcessByStdio, fork } from 'child_process'
 import { spawn } from 'cross-spawn'
 import byline from './byline'
-import { GeneratorManifest, GeneratorOptions, JsonRPC } from './types'
+import {
+  GeneratorConfig,
+  GeneratorManifest,
+  GeneratorOptions,
+  JsonRPC,
+} from './types'
 import chalk from 'chalk'
-import Debug from 'debug'
-const debug = Debug('GeneratorProcess')
+import Debug from '@prisma/debug'
+
+const debug = Debug('prisma:GeneratorProcess')
 
 let globalMessageId = 1
 
@@ -29,7 +35,7 @@ export class GeneratorProcess {
     resolve: (result: any) => void
     reject: (error: Error) => void
   }
-  constructor(private executablePath: string) {}
+  constructor(private executablePath: string, private isNode?: boolean) {}
   async init(): Promise<void> {
     if (!this.initPromise) {
       this.initPromise = this.initSingleton()
@@ -39,14 +45,25 @@ export class GeneratorProcess {
   initSingleton(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        this.child = spawn(this.executablePath, {
-          stdio: ['pipe', 'inherit', 'pipe'],
-          env: {
-            ...process.env,
-            PRISMA_GENERATOR_INVOCATION: 'true',
-          },
-          shell: true,
-        })
+        if (this.isNode) {
+          this.child = fork(this.executablePath, [], {
+            stdio: ['pipe', 'inherit', 'pipe', 'ipc'],
+            env: {
+              ...process.env,
+              PRISMA_GENERATOR_INVOCATION: 'true',
+            },
+            execArgv: ['--max-old-space-size=8096'],
+          })
+        } else {
+          this.child = spawn(this.executablePath, {
+            stdio: ['pipe', 'inherit', 'pipe'],
+            env: {
+              ...process.env,
+              PRISMA_GENERATOR_INVOCATION: 'true',
+            },
+            shell: true,
+          })
+        }
 
         this.child.on('exit', (code) => {
           this.exitCode = code
@@ -142,7 +159,7 @@ export class GeneratorProcess {
       this.child!.kill()
     }
   }
-  getManifest(): Promise<GeneratorManifest | null> {
+  getManifest(config: GeneratorConfig): Promise<GeneratorManifest | null> {
     return new Promise((resolve, reject) => {
       const messageId = this.getMessageId()
 
@@ -160,7 +177,7 @@ export class GeneratorProcess {
       this.sendMessage({
         jsonrpc: '2.0',
         method: 'getManifest',
-        params: {},
+        params: config,
         id: messageId,
       })
     })

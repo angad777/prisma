@@ -1,7 +1,15 @@
-import { Command, format, HelpError, getSchemaPath, arg } from '@prisma/sdk'
+import {
+  arg,
+  Command,
+  format,
+  getConfig,
+  getDMMF,
+  getSchemaPath,
+  HelpError,
+} from '@prisma/sdk'
 import chalk from 'chalk'
-import { getConfig, getDMMF } from '@prisma/sdk'
 import fs from 'fs'
+import path from 'path'
 
 /**
  * $ prisma validate
@@ -11,26 +19,34 @@ export class Validate implements Command {
     return new Validate()
   }
 
-  // static help template
   private static help = format(`
-    Validate a Prisma schema.
+Validate a Prisma schema.
 
-    ${chalk.bold('Usage')}
+${chalk.bold('Usage')}
 
-    With an existing schema.prisma:
-      ${chalk.dim('$')} prisma validate
+  ${chalk.dim('$')} prisma validate [options]
 
-    Or specify a schema:
-      ${chalk.dim('$')} prisma validate --schema=./schema.prisma
+${chalk.bold('Options')}
 
-  `)
+  -h, --help   Display this help message
+    --schema   Custom path to your Prisma schema
 
-  // parse arguments
+${chalk.bold('Examples')}
+
+  With an existing Prisma schema
+    ${chalk.dim('$')} prisma validate
+
+  Or specify a Prisma schema path
+    ${chalk.dim('$')} prisma validate --schema=./schema.prisma
+
+`)
+
   public async parse(argv: string[]): Promise<string | Error> {
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--schema': String,
+      '--telemetry-information': String,
     })
 
     if (args instanceof Error) {
@@ -45,13 +61,21 @@ export class Validate implements Command {
 
     if (!schemaPath) {
       throw new Error(
-        `Either provide ${chalk.greenBright('--schema')} ${chalk.bold(
-          'or',
-        )} make sure that you are in a folder with a ${chalk.greenBright(
+        `Could not find a ${chalk.bold(
           'schema.prisma',
-        )} file.`,
+        )} file that is required for this command.\nYou can either provide it with ${chalk.greenBright(
+          '--schema',
+        )}, set it as \`prisma.schema\` in your package.json or put it into the default location ${chalk.greenBright(
+          './prisma/schema.prisma',
+        )} https://pris.ly/d/prisma-schema-location`,
       )
     }
+
+    console.log(
+      chalk.dim(
+        `Prisma schema loaded from ${path.relative(process.cwd(), schemaPath)}`,
+      ),
+    )
 
     const schema = fs.readFileSync(schemaPath, 'utf-8')
 

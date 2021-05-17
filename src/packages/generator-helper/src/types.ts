@@ -1,150 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-namespace
-export namespace DMMF {
-  export interface Document {
-    datamodel: Datamodel
-    schema: Schema
-    mappings: Mapping[]
-  }
-
-  export interface EnumValue {
-    name: string
-    dbName: string
-  }
-
-  export interface DatamodelEnum {
-    name: string
-    values: EnumValue[]
-    dbName?: string | null
-  }
-
-  export interface SchemaEnum {
-    name: string
-    values: string[]
-    dbName?: string | null
-  }
-
-  export interface Datamodel {
-    models: Model[]
-    enums: DatamodelEnum[]
-  }
-
-  export interface uniqueIndex {
-    name: string
-    fields: string[]
-  }
-
-  export interface Model {
-    name: string
-    isEmbedded: boolean
-    dbName: string | null
-    fields: Field[]
-    uniqueFields: string[][]
-    uniqueIndexes: uniqueIndex[]
-    idFields: string[]
-  }
-
-  export type FieldKind = 'scalar' | 'object' | 'enum'
-  export type DatamodelFieldKind = 'scalar' | 'relation' | 'enum'
-
-  export interface Field {
-    kind: DatamodelFieldKind
-    name: string
-    isRequired: boolean
-    isList: boolean
-    isUnique: boolean
-    isId: boolean
-    type: string
-    dbNames: string[] | null
-    isGenerated: boolean
-    hasDefaultValue: boolean
-    default?: FieldDefault | string | boolean | number
-    relationToFields?: any[]
-    relationOnDelete?: string
-    relationName?: string
-  }
-
-  export interface FieldDefault {
-    name: string
-    args: any[]
-  }
-
-  export interface Schema {
-    rootQueryType?: string
-    rootMutationType?: string
-    inputTypes: InputType[]
-    outputTypes: OutputType[]
-    enums: SchemaEnum[]
-  }
-
-  export interface QueryOutput {
-    name: string
-    isRequired: boolean
-    isList: boolean
-  }
-
-  export type ArgType = string
-
-  export interface SchemaArg {
-    name: string
-    inputType: {
-      isRequired: boolean
-      isNullable: boolean
-      isList: boolean
-      type: ArgType
-      kind: FieldKind
-    }
-    isRelationFilter?: boolean
-  }
-
-  export interface OutputType {
-    name: string
-    fields: SchemaField[]
-    isEmbedded?: boolean
-  }
-
-  export interface SchemaField {
-    name: string
-    outputType: {
-      type: string // note that in the serialized state we don't have the reference to MergedOutputTypes
-      isList: boolean
-      isRequired: boolean
-      kind: FieldKind
-    }
-    args: SchemaArg[]
-  }
-
-  export interface InputType {
-    name: string
-    isWhereType?: boolean // this is needed to transform it back
-    isOrderType?: boolean
-    atLeastOne?: boolean
-    atMostOne?: boolean
-    fields: SchemaArg[]
-  }
-
-  export interface Mapping {
-    model: string
-    findOne?: string
-    findMany?: string
-    create?: string
-    update?: string
-    updateMany?: string
-    upsert?: string
-    delete?: string
-    deleteMany?: string
-  }
-
-  export enum ModelAction {
-    findOne = 'findOne',
-    findMany = 'findMany',
-    create = 'create',
-    update = 'update',
-    updateMany = 'updateMany',
-    upsert = 'upsert',
-    delete = 'delete',
-    deleteMany = 'deleteMany',
-  }
-}
+import { DMMF } from './dmmf'
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace JsonRPC {
@@ -178,9 +32,9 @@ export type Dictionary<T> = { [key: string]: T }
 
 export interface GeneratorConfig {
   name: string
-  output: string | null
+  output: EnvValue | null
   isCustomOutput?: boolean
-  provider: string
+  provider: EnvValue
   config: Dictionary<string>
   binaryTargets: string[] // check if new commit is there
   previewFeatures: string[]
@@ -191,12 +45,17 @@ export interface EnvValue {
   value: string
 }
 
-export type ConnectorType = 'mysql' | 'mongo' | 'sqlite' | 'postgresql'
+export type ConnectorType =
+  | 'mysql'
+  | 'mongodb'
+  | 'sqlite'
+  | 'postgresql'
+  | 'sqlserver'
 
 export interface DataSource {
   name: string
   activeProvider: ConnectorType
-  provider: ConnectorType[]
+  provider: ConnectorType
   url: EnvValue
   config: { [key: string]: string }
 }
@@ -204,7 +63,9 @@ export interface DataSource {
 export type BinaryPaths = {
   migrationEngine?: { [binaryTarget: string]: string } // key: target, value: path
   queryEngine?: { [binaryTarget: string]: string }
+  libqueryEngineNapi?: { [binaryTarget: string]: string }
   introspectionEngine?: { [binaryTarget: string]: string }
+  prismaFmt?: { [binaryTarget: string]: string }
 }
 
 export type GeneratorOptions = {
@@ -220,6 +81,7 @@ export type GeneratorOptions = {
 
 export type EngineType =
   | 'queryEngine'
+  | 'libqueryEngineNapi'
   | 'migrationEngine'
   | 'introspectionEngine'
   | 'prismaFmt'
@@ -234,4 +96,5 @@ export type GeneratorManifest = {
   requiresGenerators?: string[]
   requiresEngines?: EngineType[]
   version?: string
+  requiresEngineVersion?: string
 }

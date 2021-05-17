@@ -4,26 +4,18 @@ datasource db {
 }
 
 model column_name_that_becomes_empty_string {
-  field1   Int  @default(autoincrement()) @id
+  field1   Int  @id @default(autoincrement())
   // This field was commented out because of an invalid name. Please provide a valid one that matches [a-zA-Z][a-zA-Z0-9_]*
   // 12345 Int? @map("12345")
 }
 
-// The underlying table does not contain a valid unique identifier and can therefore currently not be handled.
-// model no_unique_identifier {
-  // This type is currently not supported.
-  // field1 integer key
-  // field2 Int?
-// }
-
 model unsupported_type {
-  field1         Int         @default(autoincrement()) @id
-  // This type is currently not supported.
-  // unsupported binary(50)?
+  field1      Int                        @id @default(autoincrement())
+  unsupported Unsupported("binary(50)")?
 }
 
 model column_name_that_becomes_empty_string2 {
-  field2          Int  @default(autoincrement()) @id
+  field2          Int  @id @default(autoincrement())
   // This field was commented out because of an invalid name. Please provide a valid one that matches [a-zA-Z][a-zA-Z0-9_]*
   // 1            Int? @map("1")
   // This field was commented out because of an invalid name. Please provide a valid one that matches [a-zA-Z][a-zA-Z0-9_]*
@@ -48,4 +40,12 @@ model column_name_that_becomes_empty_string2 {
   // 11           Int? @map("11")
   // This field was commented out because of an invalid name. Please provide a valid one that matches [a-zA-Z][a-zA-Z0-9_]*
   // 999999999999 Int? @map("999999999999")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by the Prisma Client.
+model no_unique_identifier {
+  field1 Unsupported("integer key")
+  field2 Int?
+
+  @@ignore
 }

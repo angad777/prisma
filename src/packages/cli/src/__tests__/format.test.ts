@@ -1,61 +1,24 @@
-import tempy from 'tempy'
-import path from 'path'
-import fs from 'fs'
-import { promisify } from 'util'
+import fs from 'fs-jetpack'
 import { Format } from '../Format'
-import assert from 'assert'
+import { Context } from './__helpers__/context'
 
-const copyFile = promisify(fs.copyFile)
+const ctx = Context.new().assemble()
 
 it('format should add a trailing EOL', async () => {
-  const tmpDir = tempy.directory()
-  const schemaTargetPath = path.join(tmpDir, 'schema.prisma')
-  await copyFile(
-    path.join(__dirname, 'fixtures/example-project/prisma/schema.prisma'),
-    schemaTargetPath,
-  )
-  const cwd = process.cwd()
-  process.chdir(tmpDir)
+  ctx.fixture('example-project/prisma')
+  await Format.new().parse([])
+  expect(fs.read('schema.prisma')).toMatchSnapshot()
+})
 
-  const format = Format.new()
-  await format.parse([])
+it('format should add missing backrelation', async () => {
+  ctx.fixture('example-project/prisma')
+  await Format.new().parse(['--schema=missing-backrelation.prisma'])
+  expect(fs.read('missing-backrelation.prisma')).toMatchSnapshot()
+})
 
-  const schema = `generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/client"
-}
-
-datasource db {
-  provider = "sqlite"
-  url      = "file:dev.db"
-}
-
-model Post {
-  id        Int      @default(autoincrement()) @id
-  createdAt DateTime @default(now())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  author    User     @relation(fields: [authorId], references: [id])
-  authorId  Int
-}
-
-model Profile {
-  id     Int     @default(autoincrement()) @id
-  bio    String?
-  user   User    @relation(fields: [userId], references: [id])
-  userId Int     @unique
-}
-
-model User {
-  id      Int      @default(autoincrement()) @id
-  email   String   @unique
-  name    String?
-  posts   Post[]
-  profile Profile?
-}
-`
-  assert.equal(fs.readFileSync(schemaTargetPath, 'utf-8'), schema)
-
-  process.chdir(cwd)
+it('format should throw if schema is broken', async () => {
+  ctx.fixture('example-project/prisma')
+  await expect(
+    Format.new().parse(['--schema=broken.prisma']),
+  ).rejects.toThrowError()
 })

@@ -1,16 +1,22 @@
-import getStream from 'get-stream'
-import { Pool } from 'undici'
-
+import getStream = require('get-stream')
+import { Client, Pool } from 'undici'
+import { URL } from 'url'
 export class Undici {
-  private pool: any
+  private pool: Pool
   private closed = false
-  constructor(url: string) {
+  constructor(url: string | URL, moreArgs?: Pool.Options) {
     this.pool = new Pool(url, {
       connections: 100,
       pipelining: 10,
+      keepAliveMaxTimeout: 600e3,
+      headersTimeout: 0,
+      ...moreArgs,
     })
   }
-  request(body: any, customHeaders?: Record<string, string>) {
+  request(
+    body: Client.DispatchOptions['body'],
+    customHeaders?: Record<string, string>,
+  ) {
     return new Promise((resolve, reject) => {
       this.pool.request(
         {
@@ -21,6 +27,7 @@ export class Undici {
             ...customHeaders,
           },
           body,
+          bodyTimeout: 0,
         },
         async (err, result) => {
           if (err) {

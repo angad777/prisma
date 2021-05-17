@@ -1,37 +1,49 @@
-import fs from 'fs'
-import pMap from 'p-map'
-import path from 'path'
-import {
-  GeneratorOptions,
-  GeneratorConfig,
-  EngineType,
-} from '@prisma/generator-helper'
-import chalk from 'chalk'
+import Debug from '@prisma/debug'
+import { fixBinaryTargets, printGeneratorConfig } from '@prisma/engine-core'
+import { enginesVersion } from '@prisma/engines'
 import {
   BinaryDownloadConfiguration,
+  download,
   DownloadOptions,
-} from '@prisma/fetch-engine/dist/download'
-import { download } from '@prisma/fetch-engine'
-import { getPlatform, Platform } from '@prisma/get-platform'
-import { printGeneratorConfig, fixBinaryTargets } from '@prisma/engine-core'
-
-import { getConfig, getDMMF, ConfigMetaFormat } from './engineCommands'
-import { unique } from './unique'
-import { pick } from './pick'
-import { Generator } from './Generator'
-import { resolveOutput } from './resolveOutput'
+  EngineTypes,
+} from '@prisma/fetch-engine'
 import {
-  predefinedGeneratorResolvers,
+  BinaryPaths,
+  EngineType,
+  GeneratorConfig,
+  GeneratorManifest,
+  GeneratorOptions,
+} from '@prisma/generator-helper'
+import { getPlatform, Platform } from '@prisma/get-platform'
+import chalk from 'chalk'
+import fs from 'fs'
+import makeDir from 'make-dir'
+import pMap from 'p-map'
+import path from 'path'
+import { getConfig, getDMMF } from './engineCommands'
+import { Generator } from './Generator'
+import { engineVersions } from './getAllVersions'
+import { pick } from './pick'
+import {
   GeneratorPaths,
+  predefinedGeneratorResolvers,
 } from './predefinedGeneratorResolvers'
-import { flatMap } from './utils/flatMap'
-import { missingModelMessage } from './utils/missingGeneratorMessage'
+import { resolveOutput } from './resolveOutput'
 import { extractPreviewFeatures } from './utils/extractPreviewFeatures'
 import { mapPreviewFeatures } from './utils/mapPreviewFeatures'
+import { missingDatasource } from './utils/missingDatasource'
+import { missingModelMessage } from './utils/missingGeneratorMessage'
+import { mongoFeatureFlagMissingMessage } from './utils/mongoFeatureFlagMissingMessage'
+import { parseEnvValue } from './utils/parseEnvValue'
+import { printConfigWarnings } from './utils/printConfigWarnings'
 
-const defaultEngineVersion = eval(`require('../package.json').prisma.version`)
+const debug = Debug('prisma:getGenerators')
 
 export type ProviderAliases = { [alias: string]: GeneratorPaths }
+
+type BinaryPathsOverride = {
+  [P in EngineType]?: string
+}
 
 export type GetGeneratorOptions = {
   schemaPath: string
@@ -42,8 +54,8 @@ export type GetGeneratorOptions = {
   baseDir?: string // useful in tests to resolve the base dir from which `output` is resolved
   overrideGenerators?: GeneratorConfig[]
   skipDownload?: boolean
+  binaryPathsOverride?: BinaryPathsOverride
 }
-
 /**
  * Makes sure that all generators have the binaries they deserve and returns a
  * `Generator` class per generator defined in the schema.prisma file.
@@ -60,6 +72,7 @@ export async function getGenerators({
   baseDir = path.dirname(schemaPath),
   overrideGenerators,
   skipDownload,
+  binaryPathsOverride,
 }: GetGeneratorOptions): Promise<Generator[]> {
   if (!schemaPath) {
     throw new Error(
@@ -72,10 +85,10 @@ export async function getGenerators({
   }
   const platform = await getPlatform()
 
-  let prismaPath: string | undefined = undefined
+  let prismaPath: string | undefined = binaryPathsOverride?.queryEngine
 
   // overwrite query engine if the version is provided
-  if (version) {
+  if (version && !prismaPath) {
     const potentialPath = eval(`require('path').join(__dirname, '..')`)
     // for pkg we need to make an exception
     if (!potentialPath.startsWith('/snapshot/')) {
@@ -103,24 +116,31 @@ export async function getGenerators({
     ignoreEnvVarErrors: true,
   })
 
-  // TODO: This needs a better abstraction, but we don't have any better right now
-  const experimentalFeatures = mapPreviewFeatures(
-    extractPreviewFeatures(config),
-  )
-
-  if (!experimentalFeatures.includes('aggregations')) {
-    experimentalFeatures.push('aggregations')
+  if (config.datasources.length === 0) {
+    throw new Error(missingDatasource)
   }
+
+  printConfigWarnings(config.warnings)
+
+  // TODO: This needs a better abstraction, but we don't have any better right now
+  const previewFeatures = mapPreviewFeatures(extractPreviewFeatures(config))
 
   const dmmf = await getDMMF({
     datamodel,
     datamodelPath: schemaPath,
     prismaPath,
-    enableExperimental: experimentalFeatures,
+    previewFeatures,
   })
 
   if (dmmf.datamodel.models.length === 0) {
     throw new Error(missingModelMessage)
+  }
+
+  if (
+    config.datasources.some((d) => d.provider.includes('mongoDb')) &&
+    !previewFeatures.includes('mongoDb')
+  ) {
+    throw new Error(mongoFeatureFlagMissingMessage)
   }
 
   const generatorConfigs = overrideGenerators || config.generators
@@ -133,31 +153,42 @@ export async function getGenerators({
     const generators = await pMap(
       generatorConfigs,
       async (generator, index) => {
-        let generatorPath = generator.provider
+        let generatorPath = parseEnvValue(generator.provider)
         let paths: GeneratorPaths | undefined
 
         // as of now mostly used by studio
-        if (aliases && aliases[generator.provider]) {
-          generatorPath = aliases[generator.provider].generatorPath
-          paths = aliases[generator.provider]
-        } else if (predefinedGeneratorResolvers[generator.provider]) {
-          paths = await predefinedGeneratorResolvers[generator.provider](
+        const providerValue = parseEnvValue(generator.provider)
+        if (aliases && aliases[providerValue]) {
+          generatorPath = aliases[providerValue].generatorPath
+          paths = aliases[providerValue]
+        } else if (predefinedGeneratorResolvers[providerValue]) {
+          paths = await predefinedGeneratorResolvers[providerValue](
             baseDir,
             cliVersion,
           )
           generatorPath = paths.generatorPath
         }
 
-        const generatorInstance = new Generator(generatorPath)
+        const generatorInstance = new Generator(
+          generatorPath,
+          generator,
+          paths?.isNode,
+        )
 
         await generatorInstance.init()
 
         // resolve output path
         if (generator.output) {
-          generator.output = path.resolve(baseDir, generator.output)
+          generator.output = {
+            value: path.resolve(baseDir, parseEnvValue(generator.output)),
+            fromEnvVar: null,
+          }
           generator.isCustomOutput = true
         } else if (paths) {
-          generator.output = paths.outputPath
+          generator.output = {
+            value: paths.outputPath,
+            fromEnvVar: null,
+          }
         } else {
           if (
             !generatorInstance.manifest ||
@@ -171,10 +202,13 @@ The generator needs to either define the \`defaultOutput\` path in the manifest 
             )
           }
 
-          generator.output = await resolveOutput({
-            defaultOutput: generatorInstance.manifest.defaultOutput,
-            baseDir,
-          })
+          generator.output = {
+            value: await resolveOutput({
+              defaultOutput: generatorInstance.manifest.defaultOutput,
+              baseDir,
+            }),
+            fromEnvVar: 'null',
+          }
         }
 
         const options: GeneratorOptions = {
@@ -184,7 +218,7 @@ The generator needs to either define the \`defaultOutput\` path in the manifest 
           dmmf,
           otherGenerators: skipIndex(generatorConfigs, index),
           schemaPath,
-          version: version || defaultEngineVersion,
+          version: version || enginesVersion, // this version makes no sense anymore and should be ignored
         }
 
         // we set the options here a bit later after instantiating the Generator,
@@ -200,57 +234,116 @@ The generator needs to either define the \`defaultOutput\` path in the manifest 
       },
     )
 
-    // 2. Download all binaries and binary targets needed
-    const binaries = flatMap(generators, (g) =>
-      g.manifest ? g.manifest.requiresEngines || [] : [],
+    // 2. Check, if all required generators are there.
+    // Generators can say in their "requiresGenerators" property in the manifest, which other generators they depend on
+    // This has mostly been introduced for 3rd party generators, which rely on `prisma-client-js`.
+    const generatorProviders: string[] = generatorConfigs.map((g) =>
+      parseEnvValue(g.provider),
     )
 
-    let binaryTargets = unique(
-      flatMap(generatorConfigs, (g) => g.binaryTargets || []),
-    ).map((t) => (t === 'native' ? platform : t))
+    for (const g of generators) {
+      if (
+        g?.manifest?.requiresGenerators &&
+        g?.manifest?.requiresGenerators.length > 0
+      ) {
+        for (const neededGenerator of g?.manifest?.requiresGenerators) {
+          if (!generatorProviders.includes(neededGenerator)) {
+            throw new Error(
+              `Generator "${g.manifest.prettyName}" requires generator "${neededGenerator}", but it is missing in your schema.prisma.
+Please add it to your schema.prisma:
 
-    if (binaryTargets.length === 0) {
-      binaryTargets = [platform]
+generator gen {
+  provider = "${neededGenerator}"
+}
+`,
+            )
+          }
+        }
+      }
     }
 
-    if (process.env.NETLIFY && !binaryTargets.includes('rhel-openssl-1.0.x')) {
-      binaryTargets.push('rhel-openssl-1.0.x')
+    // 3. Download all binaries and binary targets needed
+
+    const neededVersions = Object.create(null)
+    for (const g of generators) {
+      if (
+        g.manifest?.requiresEngines &&
+        Array.isArray(g.manifest?.requiresEngines) &&
+        g.manifest.requiresEngines.length > 0
+      ) {
+        const neededVersion = getEngineVersionForGenerator(g.manifest, version)
+
+        if (!neededVersions[neededVersion]) {
+          neededVersions[neededVersion] = { engines: [], binaryTargets: [] }
+        }
+        for (const engine of g.manifest?.requiresEngines) {
+          if (!neededVersions[neededVersion].engines.includes(engine)) {
+            neededVersions[neededVersion].engines.push(engine)
+          }
+        }
+        if (
+          g.options?.generator?.binaryTargets &&
+          g.options?.generator?.binaryTargets.length > 0
+        ) {
+          for (let binaryTarget of g.options?.generator?.binaryTargets) {
+            if (binaryTarget === 'native') {
+              binaryTarget = platform
+            }
+            if (
+              !neededVersions[neededVersion].binaryTargets.includes(
+                binaryTarget,
+              )
+            ) {
+              neededVersions[neededVersion].binaryTargets.push(binaryTarget)
+            }
+          }
+        }
+      }
     }
-
-    const binariesConfig: BinaryDownloadConfiguration = binaries.reduce(
-      (acc, curr) => {
-        acc[engineTypeToBinaryType(curr)] = eval(
-          `require('path').join(__dirname, '..')`,
-        )
-        return acc
-      },
-      {},
-    )
-
-    const downloadParams: DownloadOptions = {
-      binaries: binariesConfig,
-      binaryTargets: binaryTargets as any[],
-      showProgress:
-        typeof printDownloadProgress === 'boolean'
-          ? printDownloadProgress
-          : true,
-      version: version || defaultEngineVersion,
+    debug({ neededVersions })
+    const binaryPathsByVersion = await getBinaryPathsByVersion({
+      neededVersions,
+      platform,
+      version,
+      printDownloadProgress,
       skipDownload,
-    }
-
-    const binaryPathsWithEngineType = await download(downloadParams)
-    const binaryPaths = mapKeys(
-      binaryPathsWithEngineType,
-      binaryTypeToEngineType,
-    )
-
+      binaryPathsOverride,
+    })
     for (const generator of generators) {
       if (generator.manifest && generator.manifest.requiresEngines) {
+        const engineVersion = getEngineVersionForGenerator(
+          generator.manifest,
+          version,
+        )
+        const binaryPaths = binaryPathsByVersion[engineVersion]
+        // pick only the engines that we need for this generator
         const generatorBinaryPaths = pick(
           binaryPaths,
           generator.manifest.requiresEngines,
         )
+        debug({ generatorBinaryPaths })
         generator.setBinaryPaths(generatorBinaryPaths)
+
+        // in case cli engine version !== client engine version
+        // we need to re-generate the dmmf and pass it in to the generator
+        if (
+          engineVersion !== version &&
+          generator.options &&
+          generator.manifest.requiresEngines.includes('queryEngine') &&
+          generatorBinaryPaths.queryEngine &&
+          generatorBinaryPaths.queryEngine[platform]
+        ) {
+          const customDmmf = await getDMMF({
+            datamodel,
+            datamodelPath: schemaPath,
+            prismaPath: generatorBinaryPaths.queryEngine[platform],
+            previewFeatures,
+          })
+          const options = { ...generator.options, dmmf: customDmmf }
+          debug(generator.manifest.prettyName)
+          debug(options)
+          generator.setOptions(options)
+        }
       }
     }
 
@@ -260,6 +353,108 @@ The generator needs to either define the \`defaultOutput\` path in the manifest 
     runningGenerators.forEach((g) => g.stop())
     throw e
   }
+}
+
+type GetBinaryPathsByVersionInput = {
+  neededVersions: Record<string, any>
+  platform: string
+  version?: string
+  printDownloadProgress?: boolean
+  skipDownload?: boolean
+  binaryPathsOverride?: BinaryPathsOverride
+}
+
+async function getBinaryPathsByVersion({
+  neededVersions,
+  platform,
+  version,
+  printDownloadProgress,
+  skipDownload,
+  binaryPathsOverride,
+}: GetBinaryPathsByVersionInput): Promise<Record<string, BinaryPaths>> {
+  const binaryPathsByVersion: Record<string, BinaryPaths> = Object.create(null)
+
+  // make sure, that at least the current platform is being fetched
+  for (const currentVersion in neededVersions) {
+    // ensure binaryTargets are set correctly
+    const neededVersion = neededVersions[currentVersion]
+    if (neededVersion.binaryTargets.length === 0) {
+      neededVersion.binaryTargets.push(platform)
+      if (neededVersion.binaryTargets.length === 0) {
+        neededVersion.binaryTargets = [platform]
+      }
+    }
+
+    if (
+      process.env.NETLIFY &&
+      !neededVersion.binaryTargets.includes('rhel-openssl-1.0.x')
+    ) {
+      neededVersion.binaryTargets.push('rhel-openssl-1.0.x')
+    }
+
+    // download
+    let binaryTargetBaseDir = eval(`require('path').join(__dirname, '..')`)
+
+    if (version !== currentVersion) {
+      binaryTargetBaseDir = path.join(
+        binaryTargetBaseDir,
+        `./engines/${currentVersion}/`,
+      )
+      await makeDir(binaryTargetBaseDir).catch((e) => console.error(e))
+    }
+
+    const binariesConfig: BinaryDownloadConfiguration = neededVersion.engines.reduce(
+      (acc, curr) => {
+        // only download the binary, of not already covered by the `binaryPathsOverride`
+        if (!binaryPathsOverride?.[curr]) {
+          acc[engineTypeToBinaryType(curr)] = binaryTargetBaseDir
+        }
+        return acc
+      },
+      Object.create(null),
+    )
+
+    binaryPathsByVersion[currentVersion] = {}
+
+    if (Object.values(binariesConfig).length > 0) {
+      const downloadParams: DownloadOptions = {
+        binaries: binariesConfig,
+        binaryTargets: neededVersion.binaryTargets,
+        showProgress:
+          typeof printDownloadProgress === 'boolean'
+            ? printDownloadProgress
+            : true,
+        version:
+          currentVersion && currentVersion !== 'latest'
+            ? currentVersion
+            : enginesVersion,
+        skipDownload,
+      }
+
+      const binaryPathsWithEngineType = await download(downloadParams)
+      const binaryPaths = mapKeys(
+        binaryPathsWithEngineType,
+        binaryTypeToEngineType,
+      )
+      binaryPathsByVersion[currentVersion] = binaryPaths
+    }
+
+    if (binaryPathsOverride) {
+      const overrideBinaries = Object.keys(binaryPathsOverride)
+      const binariesCoveredByOverride = neededVersion.engines.filter((e) =>
+        overrideBinaries.includes(e),
+      )
+      if (binariesCoveredByOverride.length > 0) {
+        for (const bin of binariesCoveredByOverride) {
+          binaryPathsByVersion[currentVersion][bin] = {
+            [platform]: binaryPathsOverride[bin],
+          }
+        }
+      }
+    }
+  }
+
+  return binaryPathsByVersion
 }
 
 /**
@@ -285,12 +480,15 @@ export const knownBinaryTargets: Platform[] = [
   'darwin',
   'debian-openssl-1.0.x',
   'debian-openssl-1.1.x',
+  'linux-arm-openssl-1.0.x',
+  'linux-arm-openssl-1.1.x',
   'rhel-openssl-1.0.x',
   'rhel-openssl-1.1.x',
   'linux-musl',
   'linux-nixos',
   'windows',
-  'freebsd',
+  'freebsd11',
+  'freebsd12',
   'openbsd',
   'netbsd',
   'arm',
@@ -308,7 +506,7 @@ async function validateGenerators(
   const platform = await getPlatform()
 
   for (const generator of generators) {
-    if (generator.provider === 'photonjs') {
+    if (parseEnvValue(generator.provider) === 'photonjs') {
       throw new Error(`Oops! Photon has been renamed to Prisma Client. Please make the following adjustments:
   1. Rename ${chalk.red('provider = "photonjs"')} to ${chalk.green(
         'provider = "prisma-client-js"',
@@ -324,11 +522,7 @@ async function validateGenerators(
   4. Run ${chalk.green('prisma generate')} again.
       `)
     }
-    if (generator.provider === 'nexus-prisma') {
-      throw new Error(
-        '`nexus-prisma` is no longer a generator. You can read more at https://pris.ly/nexus-prisma-upgrade-0.4',
-      )
-    }
+
     if (generator.config.platforms) {
       throw new Error(
         `The \`platforms\` field on the generator definition is deprecated. Please rename it to \`binaryTargets\`.`,
@@ -414,38 +608,42 @@ function engineTypeToBinaryType(
   engineType: EngineType,
 ): keyof BinaryDownloadConfiguration {
   if (engineType === 'introspectionEngine') {
-    return 'introspection-engine'
+    return EngineTypes.introspectionEngine
   }
 
   if (engineType === 'migrationEngine') {
-    return 'migration-engine'
+    return EngineTypes.migrationEngine
   }
 
   if (engineType === 'queryEngine') {
-    return 'query-engine'
+    return EngineTypes.queryEngine
   }
-
+  if (engineType === 'libqueryEngineNapi') {
+    return EngineTypes.libqueryEngineNapi
+  }
   if (engineType === 'prismaFmt') {
-    return 'prisma-fmt'
+    return EngineTypes.prismaFmt
   }
 
   throw new Error(`Could not convert engine type ${engineType}`)
 }
 
 function binaryTypeToEngineType(binaryType: string): string {
-  if (binaryType === 'introspection-engine') {
+  if (binaryType === EngineTypes.introspectionEngine) {
     return 'introspectionEngine'
   }
 
-  if (binaryType === 'migration-engine') {
+  if (binaryType === EngineTypes.migrationEngine) {
     return 'migrationEngine'
   }
-
-  if (binaryType === 'query-engine') {
+  if (binaryType === EngineTypes.libqueryEngineNapi) {
+    return 'libqueryEngineNapi'
+  }
+  if (binaryType === EngineTypes.queryEngine) {
     return 'queryEngine'
   }
 
-  if (binaryType === 'prisma-fmt') {
+  if (binaryType === EngineTypes.prismaFmt) {
     return 'prismaFmt'
   }
 
@@ -460,4 +658,16 @@ function mapKeys<T extends object>(
     acc[mapper(key as keyof T)] = value
     return acc
   }, {})
+}
+
+function getEngineVersionForGenerator(
+  manifest?: GeneratorManifest,
+  defaultVersion?: string | undefined,
+): string {
+  let neededVersion: string = manifest!.requiresEngineVersion!
+  if (manifest?.version && engineVersions[manifest?.version]) {
+    neededVersion = engineVersions[manifest?.version]
+  }
+  neededVersion = neededVersion ?? defaultVersion // default to CLI version otherwise, if not provided
+  return neededVersion ?? 'latest'
 }

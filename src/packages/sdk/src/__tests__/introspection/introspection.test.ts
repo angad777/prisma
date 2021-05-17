@@ -20,27 +20,27 @@ test('introspection basic', async () => {
       url      = \\"file:./blog.db\\"
     }
 
+    model Post {
+      author    Int
+      content   String?
+      createdAt DateTime @default(dbgenerated(\\"'1970-01-01 00:00:00'\\"))
+      kind      String?
+      published Boolean  @default(false)
+      title     String   @default(\\"\\")
+      updatedAt DateTime @default(dbgenerated(\\"'1970-01-01 00:00:00'\\"))
+      uuid      String   @id
+      User      User     @relation(fields: [author], references: [id])
+    }
+
     model User {
       age     Int     @default(0)
       amount  Float   @default(0)
       balance Float   @default(0)
-      email   String  @default(\\"\\") @unique
-      id      Int     @default(autoincrement()) @id
+      email   String  @unique @default(\\"\\")
+      id      Int     @id @default(autoincrement())
       name    String?
       role    String  @default(\\"USER\\")
       Post    Post[]
-    }
-
-    model Post {
-      author    Int
-      content   String?
-      createdAt DateTime @default(dbgenerated())
-      kind      String?
-      published Boolean  @default(false)
-      title     String   @default(\\"\\")
-      updatedAt DateTime @default(dbgenerated())
-      uuid      String   @id
-      User      User     @relation(fields: [author], references: [id])
     }
     ",
       "version": "NonPrisma",
@@ -49,433 +49,442 @@ test('introspection basic', async () => {
   `)
   const metadata = await engine.getDatabaseMetadata(schema)
   expect(metadata).toMatchInlineSnapshot(`
-          Object {
-            "size_in_bytes": 0,
-            "table_count": 3,
-          }
-      `)
+    Object {
+      "size_in_bytes": 53248,
+      "table_count": 3,
+    }
+  `)
   const databases = await engine.listDatabases(schema)
   expect(databases).toMatchInlineSnapshot(`
-          Array [
-            "",
-            "blog.db",
-          ]
-      `)
+    Array [
+      "blog.db",
+    ]
+  `)
+
+  const dbVersion = await engine.getDatabaseVersion(schema)
+  expect(dbVersion.length > 0).toBe(true)
+
   const description = await engine.getDatabaseDescription(schema)
-  expect(JSON.parse(description)).toMatchInlineSnapshot(`
-    Object {
-      "enums": Array [],
-      "sequences": Array [],
-      "tables": Array [
-        Object {
-          "columns": Array [
-            Object {
-              "autoIncrement": true,
-              "default": null,
-              "name": "revision",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+
+  expect(description).toMatchInlineSnapshot(`
+    "{
+      \\"tables\\": [
+        {
+          \\"name\\": \\"Post\\",
+          \\"columns\\": [
+            {
+              \\"name\\": \\"author\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "name",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"content\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Nullable\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "datamodel",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"createdAt\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"DATE\\",
+                \\"family\\": \\"DateTime\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-            },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "status",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"DbGenerated\\": \\"'1970-01-01 00:00:00'\\"
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "applied",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+            {
+              \\"name\\": \\"kind\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Nullable\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "rolled_back",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+            {
+              \\"name\\": \\"published\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"BOOLEAN\\",
+                \\"family\\": \\"Boolean\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-            },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "datamodel_steps",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": false
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "database_migration",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"title\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-            },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "errors",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": \\"\\"
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "started_at",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "DATE",
-                "family": "dateTime",
-                "fullDataType": "DATE",
+            {
+              \\"name\\": \\"updatedAt\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"DATE\\",
+                \\"family\\": \\"DateTime\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-            },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "finished_at",
-              "tpe": Object {
-                "arity": "nullable",
-                "characterMaximumLength": null,
-                "dataType": "DATE",
-                "family": "dateTime",
-                "fullDataType": "DATE",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"DbGenerated\\": \\"'1970-01-01 00:00:00'\\"
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
+            {
+              \\"name\\": \\"uuid\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
+              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
+            }
           ],
-          "foreignKeys": Array [],
-          "indices": Array [],
-          "name": "_Migration",
-          "primaryKey": Object {
-            "columns": Array [
-              "revision",
+          \\"indices\\": [
+            {
+              \\"name\\": \\"Post.uuid\\",
+              \\"columns\\": [
+                \\"uuid\\"
+              ],
+              \\"tpe\\": \\"Unique\\"
+            }
+          ],
+          \\"primary_key\\": {
+            \\"columns\\": [
+              \\"uuid\\"
             ],
-            "constraintName": null,
-            "sequence": null,
+            \\"sequence\\": null,
+            \\"constraint_name\\": null
           },
+          \\"foreign_keys\\": [
+            {
+              \\"constraint_name\\": null,
+              \\"columns\\": [
+                \\"author\\"
+              ],
+              \\"referenced_table\\": \\"User\\",
+              \\"referenced_columns\\": [
+                \\"id\\"
+              ],
+              \\"on_delete_action\\": \\"Restrict\\",
+              \\"on_update_action\\": \\"NoAction\\"
+            }
+          ]
         },
-        Object {
-          "columns": Array [
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": 0,
+        {
+          \\"name\\": \\"User\\",
+          \\"columns\\": [
+            {
+              \\"name\\": \\"age\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "age",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": 0
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": 0,
+            {
+              \\"name\\": \\"amount\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"REAL\\",
+                \\"family\\": \\"Float\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "amount",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "REAL",
-                "family": "float",
-                "fullDataType": "REAL",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": 0.0
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": 0,
+            {
+              \\"name\\": \\"balance\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"REAL\\",
+                \\"family\\": \\"Float\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "balance",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "REAL",
-                "family": "float",
-                "fullDataType": "REAL",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": 0.0
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": "",
+            {
+              \\"name\\": \\"email\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "email",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": \\"\\"
+                },
+                \\"constraint_name\\": null
               },
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": true,
-              "default": null,
-              "name": "id",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+            {
+              \\"name\\": \\"id\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": true
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "name",
-              "tpe": Object {
-                "arity": "nullable",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"name\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Nullable\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": "USER",
+            {
+              \\"name\\": \\"role\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "role",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+              \\"default\\": {
+                \\"kind\\": {
+                  \\"Value\\": \\"USER\\"
+                },
+                \\"constraint_name\\": null
               },
-            },
+              \\"auto_increment\\": false
+            }
           ],
-          "foreignKeys": Array [],
-          "indices": Array [
-            Object {
-              "columns": Array [
-                "email",
+          \\"indices\\": [
+            {
+              \\"name\\": \\"User.email\\",
+              \\"columns\\": [
+                \\"email\\"
               ],
-              "name": "User.email",
-              "tpe": "unique",
+              \\"tpe\\": \\"Unique\\"
             },
-            Object {
-              "columns": Array [
-                "id",
+            {
+              \\"name\\": \\"User.id\\",
+              \\"columns\\": [
+                \\"id\\"
               ],
-              "name": "User.id",
-              "tpe": "unique",
-            },
+              \\"tpe\\": \\"Unique\\"
+            }
           ],
-          "name": "User",
-          "primaryKey": Object {
-            "columns": Array [
-              "id",
+          \\"primary_key\\": {
+            \\"columns\\": [
+              \\"id\\"
             ],
-            "constraintName": null,
-            "sequence": null,
+            \\"sequence\\": null,
+            \\"constraint_name\\": null
           },
+          \\"foreign_keys\\": []
         },
-        Object {
-          "columns": Array [
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "author",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "INTEGER",
-                "family": "int",
-                "fullDataType": "INTEGER",
+        {
+          \\"name\\": \\"_Migration\\",
+          \\"columns\\": [
+            {
+              \\"name\\": \\"revision\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": true
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "content",
-              "tpe": Object {
-                "arity": "nullable",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"name\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "DBGENERATED": "'1970-01-01 00:00:00'",
+            {
+              \\"name\\": \\"datamodel\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "createdAt",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "DATE",
-                "family": "dateTime",
-                "fullDataType": "DATE",
-              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "kind",
-              "tpe": Object {
-                "arity": "nullable",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"status\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": false,
+            {
+              \\"name\\": \\"applied\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "published",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "BOOLEAN",
-                "family": "boolean",
-                "fullDataType": "BOOLEAN",
-              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "VALUE": "",
+            {
+              \\"name\\": \\"rolled_back\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"INTEGER\\",
+                \\"family\\": \\"Int\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "title",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
-              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": Object {
-                "DBGENERATED": "'1970-01-01 00:00:00'",
+            {
+              \\"name\\": \\"datamodel_steps\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
-              "name": "updatedAt",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "DATE",
-                "family": "dateTime",
-                "fullDataType": "DATE",
-              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
-            Object {
-              "autoIncrement": false,
-              "default": null,
-              "name": "uuid",
-              "tpe": Object {
-                "arity": "required",
-                "characterMaximumLength": null,
-                "dataType": "TEXT",
-                "family": "string",
-                "fullDataType": "TEXT",
+            {
+              \\"name\\": \\"database_migration\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
               },
+              \\"default\\": null,
+              \\"auto_increment\\": false
             },
+            {
+              \\"name\\": \\"errors\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"TEXT\\",
+                \\"family\\": \\"String\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
+              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
+            },
+            {
+              \\"name\\": \\"started_at\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"DATE\\",
+                \\"family\\": \\"DateTime\\",
+                \\"arity\\": \\"Required\\",
+                \\"native_type\\": null
+              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
+            },
+            {
+              \\"name\\": \\"finished_at\\",
+              \\"tpe\\": {
+                \\"full_data_type\\": \\"DATE\\",
+                \\"family\\": \\"DateTime\\",
+                \\"arity\\": \\"Nullable\\",
+                \\"native_type\\": null
+              },
+              \\"default\\": null,
+              \\"auto_increment\\": false
+            }
           ],
-          "foreignKeys": Array [
-            Object {
-              "columns": Array [
-                "author",
-              ],
-              "constraintName": null,
-              "onDeleteAction": "restrict",
-              "referencedColumns": Array [
-                "id",
-              ],
-              "referencedTable": "User",
-            },
-          ],
-          "indices": Array [
-            Object {
-              "columns": Array [
-                "uuid",
-              ],
-              "name": "Post.uuid",
-              "tpe": "unique",
-            },
-          ],
-          "name": "Post",
-          "primaryKey": Object {
-            "columns": Array [
-              "uuid",
+          \\"indices\\": [],
+          \\"primary_key\\": {
+            \\"columns\\": [
+              \\"revision\\"
             ],
-            "constraintName": null,
-            "sequence": null,
+            \\"sequence\\": null,
+            \\"constraint_name\\": null
           },
-        },
+          \\"foreign_keys\\": []
+        }
       ],
-    }
+      \\"enums\\": [],
+      \\"sequences\\": [],
+      \\"views\\": [],
+      \\"procedures\\": [],
+      \\"user_defined_types\\": []
+    }"
   `)
   engine.stop()
 })

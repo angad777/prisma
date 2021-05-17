@@ -1,15 +1,22 @@
+import { getPlatform } from '@prisma/get-platform'
 import {
+  arg,
   Command,
+  getConfig,
+  getSchema,
+  getSchemaPath,
   getVersion,
   resolveBinary,
-  arg,
-  getSchemaPath,
-  getSchema,
-  getConfig,
+  EngineType,
+  format,
+  isError,
+  HelpError,
+  engineEnvVarMap,
 } from '@prisma/sdk'
-import { getPlatform } from '@prisma/get-platform'
 import fs from 'fs'
 import path from 'path'
+import chalk from 'chalk'
+import { getInstalledPrismaClientVersion } from './utils/getClientVersion'
 const packageJson = require('../package.json') // eslint-disable-line @typescript-eslint/no-var-requires
 
 interface BinaryInfo {
@@ -26,43 +33,65 @@ export class Version implements Command {
     return new Version()
   }
 
-  async parse(argv: string[]): Promise<string> {
+  private static help = format(`
+  Print current version of Prisma components
+
+  ${chalk.bold('Usage')}
+
+    ${chalk.dim('$')} prisma -v [options]
+    ${chalk.dim('$')} prisma version [options]
+
+  ${chalk.bold('Options')}
+
+    -h, --help     Display this help message
+        --json     Output JSON
+`)
+
+  async parse(argv: string[]): Promise<string | Error> {
     const args = arg(argv, {
+      '--help': Boolean,
+      '-h': '--help',
+      '--version': Boolean,
+      '-v': '--version',
       '--json': Boolean,
+      '--telemetry-information': String,
     })
+
+    if (isError(args)) {
+      return this.help(args.message)
+    }
+
+    if (args['--help']) {
+      return this.help()
+    }
+
     const platform = await getPlatform()
 
-    const introspectionEngine = await this.resolveEngine(
-      'introspection-engine',
-      'PRISMA_INTROSPECTION_ENGINE_BINARY',
-      platform,
-    )
-    const migrationEngine = await this.resolveEngine(
-      'migration-engine',
-      'PRISMA_MIGRATION_ENGINE_BINARY',
-      platform,
-    )
-    const queryEngine = await this.resolveEngine(
-      'query-engine',
-      'PRISMA_QUERY_ENGINE_BINARY',
-      platform,
-    )
-    const fmtBinary = await this.resolveEngine(
-      'prisma-fmt',
-      'PRISMA_FMT_BINARY',
-      platform,
-    )
+    const introspectionEngine = await this.resolveEngine('introspection-engine')
+    const migrationEngine = await this.resolveEngine('migration-engine')
+    const queryEngine = await this.resolveEngine('query-engine')
+    const fmtBinary = await this.resolveEngine('prisma-fmt')
+
+    const prismaClientVersion = await getInstalledPrismaClientVersion()
 
     const rows = [
       [packageJson.name, packageJson.version],
+      ['@prisma/client', prismaClientVersion ?? 'Not found'],
       ['Current platform', platform],
       ['Query Engine', this.printBinaryInfo(queryEngine)],
       ['Migration Engine', this.printBinaryInfo(migrationEngine)],
       ['Introspection Engine', this.printBinaryInfo(introspectionEngine)],
       ['Format Binary', this.printBinaryInfo(fmtBinary)],
+      [
+        'Default Engines Hash',
+        packageJson.dependencies['@prisma/engines'].split('.').pop(),
+      ],
+      ['Studio', packageJson.devDependencies['@prisma/studio-server']],
     ]
 
-    const featureFlags = await this.getFeatureFlags()
+    const schemaPath = await getSchemaPath()
+    const featureFlags = await this.getFeatureFlags(schemaPath)
+
     if (featureFlags && featureFlags.length > 0) {
       rows.push(['Preview Features', featureFlags.join(', ')])
     }
@@ -70,7 +99,11 @@ export class Version implements Command {
     return this.printTable(rows, args['--json'])
   }
 
-  private async getFeatureFlags(): Promise<string[]> {
+  private async getFeatureFlags(schemaPath: string | null): Promise<string[]> {
+    if (!schemaPath) {
+      return []
+    }
+
     try {
       const datamodel = await getSchema()
       const config = await getConfig({
@@ -100,19 +133,16 @@ export class Version implements Command {
     )}${resolved})`
   }
 
-  private async resolveEngine(
-    binaryName: string,
-    envVar: string,
-    platform: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-  ): Promise<BinaryInfo> {
+  private async resolveEngine(binaryName: EngineType): Promise<BinaryInfo> {
+    const envVar = engineEnvVarMap[binaryName]
     const pathFromEnv = process.env[envVar]
     if (pathFromEnv && fs.existsSync(pathFromEnv)) {
-      const version = await getVersion(pathFromEnv)
+      const version = await getVersion(pathFromEnv, binaryName)
       return { version, path: pathFromEnv, fromEnvVar: envVar }
     }
 
-    const binaryPath = await resolveBinary(binaryName as any) // eslint-disable-line @typescript-eslint/no-explicit-any
-    const version = await getVersion(binaryPath)
+    const binaryPath = await resolveBinary(binaryName)
+    const version = await getVersion(binaryPath, binaryName)
     return { path: binaryPath, version }
   }
 
@@ -129,14 +159,16 @@ export class Version implements Command {
       .map(([left, right]) => `${left.padEnd(maxPad)} : ${right}`)
       .join('\n')
   }
+
+  public help(error?: string): string | HelpError {
+    if (error) {
+      return new HelpError(`\n${chalk.bold.red(`!`)} ${error}\n${Version.help}`)
+    }
+
+    return Version.help
+  }
 }
 
 function slugify(str: string): string {
   return str.toString().toLowerCase().replace(/\s+/g, '-')
 }
-
-// @prisma/cli          : 2.0.0-dev.0
-// Current platform     : darwin
-// Query Engine         : version (at /.../.../, resolved by PRISMA_QUERY_ENGINE_BINARY)
-// Migration Engine     : version (at /.../.../)
-// Introspection Engine : version (at /.../.../)

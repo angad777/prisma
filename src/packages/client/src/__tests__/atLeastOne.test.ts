@@ -22,7 +22,7 @@ describe('at least one validation', () => {
       rootField: 'findManyUser',
     })
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
           email: {
 
@@ -38,7 +38,7 @@ describe('at least one validation', () => {
           locationId
           someFloats
         }
-      }"
+      }
     `)
     try {
       document.validate(select, false, 'users')
@@ -72,6 +72,7 @@ describe('at least one validation', () => {
       `)
     }
   })
+
   test('valid query', () => {
     const select = {
       where: {

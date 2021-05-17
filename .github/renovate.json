@@ -1,48 +1,69 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:base"],
-  "schedule": ["after 4pm on friday"],
-  "semanticCommits": true,
-  "ignoreDeps": ["react", "ink", "ink-spinner", "ink-link", "@types/react"],
+  "extends": ["config:base", ":disableRateLimiting"],
+  "schedule": ["at any time"],
+  "semanticCommits": "enabled",
   "masterIssue": true,
+  "reviewers": ["@jolg42", "@williamluke4", "millsp"],
+  "rebaseWhen": "conflicted",
+  "ignoreDeps": ["esbuild", "sqlite3"],
   "packageRules": [
     {
-      "groupName": "renovate-meta",
-      "updateTypes": ["lockFileMaintenance", "pin"]
+      "groupName": "devDependencies (non-major)",
+      "automerge": "true",
+      "depTypeList": ["devDependencies"],
+      "updateTypes": ["patch", "minor"],
+      "excludePackageNames": [
+        "@prisma/engines",
+        "@prisma/engines-version",
+        "@prisma/studio-server",
+        "checkpoint-client"
+      ],
+      "schedule": ["before 9am on Monday", "before 9am on Wednesday"]
     },
     {
       "groupName": "dependencies (non-major)",
       "depTypeList": ["dependencies"],
-      "updateTypes": ["patch", "minor"]
-    },
-    {
-      "groupName": "devDependencies (major)",
-      "depTypeList": ["devDependencies"],
-      "updateTypes": ["major"]
+      "updateTypes": ["patch", "minor"],
+      "excludePackageNames": [
+        "@prisma/engines",
+        "@prisma/engines-version",
+        "checkpoint-client"
+      ],
+      "schedule": ["before 9am on Monday", "before 9am on Wednesday"]
     },
     {
       "groupName": "definitelyTyped",
       "automerge": "true",
       "packagePatterns": ["^@types/"],
-      "excludePackageNames": ["@types/react"],
       "updateTypes": ["patch", "minor"]
     },
     {
-      "groupName": "devDependencies (non-major)",
+      "groupName": "engines",
       "automerge": "true",
-      "depTypeList": ["devDependencies"],
-      "updateTypes": ["patch", "minor"]
+      "ignoreUnstable": false,
+      "followTag": "latest",
+      "reviewers": ["@jolg42", "@williamluke4", "millsp"],
+      "packageNames": ["@prisma/engines", "@prisma/engines-version"]
     },
     {
-      "groupName": "React & ink (non-major)",
-      "packageNames": [
-        "react",
-        "ink",
-        "ink-spinner",
-        "ink-link",
-        "@types/react"
-      ],
-      "updateTypes": ["patch", "minor"]
+      "groupName": "Studio",
+      "automerge": "true",
+      "packageNames": ["@prisma/studio-server"],
+      "updateTypes": ["patch", "minor"],
+      "reviewers": ["@madebysid", "@jolg42"]
+    },
+    {
+      "groupName": "checkpoint-client",
+      "packageNames": ["checkpoint-client"],
+      "updateTypes": ["patch", "minor"],
+      "reviewers": ["@Weakky", "jolg42"]
+    },
+    {
+      "groupName": "react-prisma",
+      "paths": ["src/packages/react-prisma/**"],
+      "rangeStrategy": "replace",
+      "schedule": ["before 9am on Monday"]
     }
   ]
 }

@@ -1,41 +1,65 @@
+import { platforms } from '@prisma/get-platform'
+import chalk from 'chalk'
+import execa from 'execa'
 import fetch from 'node-fetch'
+import pMap from 'p-map'
 import { getProxyAgent } from './getProxyAgent'
 import { getDownloadUrl } from './util'
-import { platforms } from '@prisma/get-platform'
-import PQueue from 'p-queue'
-import execa from 'execa'
 
 export async function getLatestTag(): Promise<any> {
-  if (process.env.RELEASE_PROMOTE_DEV) {
-    const versions = await getVersionHashes(process.env.RELEASE_PROMOTE_DEV)
-    console.log(
-      `getLatestTag: taking ${versions.engines} as RELEASE_PROMOTE_DEV has been provided`,
-    )
-    return versions.engines
+  let branch = await getBranch()
+  if (
+    branch !== 'master' &&
+    !isPatchBranch(branch) &&
+    !branch.startsWith('integration/')
+  ) {
+    branch = 'master'
   }
 
-  let branch = await getBranch()
-  if (branch !== 'master' && !isPatchBranch(branch)) {
+  // remove the "integration/" part
+  branch = branch.replace(/^integration\//, '')
+  // console.log({ branch }, 'after replace')
+
+  // first try to get the branch as it is
+  // if it doesn't have an equivalent in the engines repo
+  // default back to master
+  let commits = await getCommits(branch)
+  if (
+    (!commits || !Array.isArray(commits)) &&
+    branch !== 'master' &&
+    !isPatchBranch(branch)
+  ) {
     console.log(
       `Overwriting branch "${branch}" with "master" as it's not a branch we have binaries for`,
     )
     branch = 'master'
+    commits = await getCommits(branch)
   }
 
-  const url = `https://api.github.com/repos/prisma/prisma-engines/commits?sha=${branch}`
-  const result = await fetch(url, {
-    agent: getProxyAgent(url),
-  } as any).then((res) => res.json())
-  const commits = result.map((r) => r.sha)
-  const commit = await getFirstExistingCommit(commits)
-  const queue = new PQueue({ concurrency: 30 })
-  const promises = []
+  if (!Array.isArray(commits)) {
+    console.error(commits)
+    throw new Error(
+      `Could not fetch commits from github: ${JSON.stringify(
+        commits,
+        null,
+        2,
+      )}`,
+    )
+  }
+
+  return getFirstFinishedCommit(branch, commits)
+}
+
+export function getAllUrls(branch: string, commit: string): string[] {
+  const urls: string[] = []
   const excludedPlatforms = [
     'freebsd',
     'arm',
     'linux-nixos',
     'openbsd',
     'netbsd',
+    'freebsd11',
+    'freebsd12',
   ]
   const relevantPlatforms = platforms.filter(
     (p) => !excludedPlatforms.includes(p),
@@ -55,56 +79,55 @@ export async function getLatestTag(): Promise<any> {
         '.sha256',
       ]) {
         const downloadUrl = getDownloadUrl(
-          'all_commits',
+          branch,
           commit,
           platform,
           engine,
           extension,
         )
-        promises.push(
-          queue.add(async () => ({
-            downloadUrl,
-            exists: await urlExists(downloadUrl),
-          })),
-        )
+        urls.push(downloadUrl)
       }
     }
   }
 
-  // wait for all queue items to finish
-  const exist: Array<{
-    downloadUrl: string
-    exists: boolean
-  }> = await Promise.all(promises)
-
-  const missing = exist.filter((e) => !e.exists)
-  if (missing.length > 0) {
-    throw new Error(
-      `Could not get new tag, as some assets don't exist: ${missing
-        .map((m) => m.downloadUrl)
-        .join(', ')}`,
-    )
-  }
-
-  return commit
+  return urls
 }
 
-async function getFirstExistingCommit(commits: string[]): Promise<string> {
+async function getFirstFinishedCommit(
+  branch: string,
+  commits: string[],
+): Promise<string | void> {
   for (const commit of commits) {
-    const exists = await urlExists(
-      getDownloadUrl('all_commits', commit, 'darwin', 'query-engine'),
-    )
-    if (exists) {
+    const urls = getAllUrls(branch, commit)
+    // TODO: potential to speed things up
+    // We don't always need to wait for the last commit
+    const exist = await pMap(urls, urlExists, { concurrency: 10 })
+    const hasMissing = exist.some((e) => !e)
+
+    if (!hasMissing) {
       return commit
+    } else {
+      const missing = urls.filter((_, i) => !exist[i])
+      // if all are missing, we don't have to talk about it
+      // it might just be a broken commit or just still building
+      if (missing.length !== urls.length) {
+        console.log(
+          `${chalk.blueBright(
+            'info',
+          )} The engine commit ${commit} is not yet done. We're skipping it as we're in dev. Missing urls: ${
+            missing.length
+          }`,
+        )
+      }
     }
   }
 }
 
-async function urlExists(url) {
+export async function urlExists(url) {
   try {
     const res = await fetch(url, {
       method: 'HEAD',
-      agent: getProxyAgent(url),
+      agent: getProxyAgent(url) as any,
     })
 
     const headers = fromEntries(res.headers.entries())
@@ -132,35 +155,55 @@ function fromEntries<T>(
 }
 
 async function getBranch() {
-  if (process.env.PATCH_BRANCH) {
-    return process.env.PATCH_BRANCH
+  if (process.env.NODE_ENV !== 'test') {
+    if (process.env.PATCH_BRANCH) {
+      return process.env.PATCH_BRANCH
+    }
+    if (process.env.BUILDKITE_BRANCH) {
+      return process.env.BUILDKITE_BRANCH
+    }
+    if (process.env.GITHUB_CONTEXT) {
+      const context = JSON.parse(process.env.GITHUB_CONTEXT)
+      return context.head_ref
+    }
   }
-  if (process.env.BUILDKITE_BRANCH) {
-    return process.env.BUILDKITE_BRANCH
+
+  // Need to be handled
+  // for example it's used in https://github.com/prisma/binary-tester and the environment
+  // is not a git repository so it fails
+  try {
+    const result = await execa.command('git rev-parse --abbrev-ref HEAD', {
+      shell: true,
+      stdio: 'pipe',
+    })
+    return result.stdout
+  } catch (e) {
+    console.error(e)
   }
-  const result = await execa.command('git rev-parse --abbrev-ref HEAD', {
-    shell: true,
-    stdio: 'pipe',
-  })
-  return result.stdout
+
+  return
 }
 
 // TODO: Adjust this for stable release
 function isPatchBranch(version: string): boolean {
-  return /2\.(\d+)\.x/.test(version)
+  return /^2\.(\d+)\.x/.test(version)
 }
 
-async function getVersionHashes(
-  npmVersion: string,
-): Promise<{ engines: string; prisma: string }> {
-  return fetch(`https://unpkg.com/@prisma/cli@${npmVersion}/package.json`, {
+async function getCommits(branch: string): Promise<string[] | object> {
+  const url = `https://github-cache.prisma.workers.dev/repos/prisma/prisma-engines/commits?sha=${branch}`
+  const result = await fetch(url, {
+    agent: getProxyAgent(url) as any,
     headers: {
-      accept: 'application/json',
+      Authorization: process.env.GITHUB_TOKEN
+        ? `token ${process.env.GITHUB_TOKEN}`
+        : undefined,
     },
-  })
-    .then((res) => res.json())
-    .then((pkg) => ({
-      engines: pkg.prisma.version,
-      prisma: pkg.prisma.prismaCommit,
-    }))
+  } as any).then((res) => res.json())
+
+  if (!Array.isArray(result)) {
+    return result
+  }
+
+  const commits = result.map((r) => r.sha)
+  return commits
 }

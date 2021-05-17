@@ -24,7 +24,7 @@ describe('optional to one relation', () => {
     })
 
     expect(String(transformDocument(document))).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyPost(where: {
           author: null
         }) {
@@ -35,8 +35,9 @@ describe('optional to one relation', () => {
           title
           content
           authorId
+          optionnal
         }
-      }"
+      }
     `)
   })
 })

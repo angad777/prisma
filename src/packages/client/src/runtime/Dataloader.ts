@@ -12,9 +12,12 @@ export type DataloaderOptions<T> = {
 
 export class Dataloader<T = any> {
   batches: { [key: string]: Job[] }
-  private tickActive: boolean = false
+  private tickActive = false
   constructor(private options: DataloaderOptions<T>) {
     this.batches = {}
+  }
+  get [Symbol.toStringTag]() {
+    return 'Dataloader'
   }
   request(request: T): Promise<any> {
     const hash = this.options.batchBy(request)
@@ -49,42 +52,42 @@ export class Dataloader<T = any> {
       delete this.batches[key]
 
       // only batch if necessary
-      // this might occur, if there's e.g. only 1 findOne in the batch
+      // this might occur, if there's e.g. only 1 findUnique in the batch
       if (batch.length === 1) {
         this.options
           .singleLoader(batch[0].request)
-          .then(result => {
+          .then((result) => {
             if (result instanceof Error) {
               batch[0].reject(result)
             } else {
               batch[0].resolve(result)
             }
           })
-          .catch(e => {
+          .catch((e) => {
             batch[0].reject(e)
           })
       } else {
         this.options
-          .batchLoader(batch.map(j => j.request))
-          .then(results => {
+          .batchLoader(batch.map((j) => j.request))
+          .then((results) => {
             if (results instanceof Error) {
-              for (let i = 0; i < batch!.length; i++) {
-                batch![i].reject(results)
+              for (let i = 0; i < batch.length; i++) {
+                batch[i].reject(results)
               }
             } else {
-              for (let i = 0; i < batch!.length; i++) {
+              for (let i = 0; i < batch.length; i++) {
                 const value = results[i]
                 if (value instanceof Error) {
-                  batch![i].reject(value)
+                  batch[i].reject(value)
                 } else {
-                  batch![i].resolve(value)
+                  batch[i].resolve(value)
                 }
               }
             }
           })
-          .catch(e => {
-            for (let i = 0; i < batch!.length; i++) {
-              batch![i].reject(e)
+          .catch((e) => {
+            for (let i = 0; i < batch.length; i++) {
+              batch[i].reject(e)
             }
           })
       }

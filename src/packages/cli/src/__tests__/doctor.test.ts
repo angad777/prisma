@@ -1,74 +1,59 @@
-import tempy from 'tempy'
-import path from 'path'
 import { Doctor } from '../Doctor'
-import copy from '@apexearth/copy'
-import assert from 'assert'
-import stripAnsi from 'strip-ansi'
+import { consoleContext, Context } from './__helpers__/context'
 
-describe('doctor', () => {
-  it('doctor should succeed when schema and db match', async () => {
-    const tmpDir = tempy.directory()
-    await copy({
-      from: path.join(__dirname, 'fixtures/example-project/prisma'),
-      to: tmpDir,
-      recursive: true,
-    })
-    const cwd = process.cwd()
-    process.chdir(tmpDir)
+const ctx = Context.new().add(consoleContext()).assemble()
 
-    const doctor = Doctor.new()
-    const errLog = []
-    const oldConsoleError = console.error
-    console.error = (...args) => {
-      errLog.push(...args)
-    }
-    const result = await doctor.parse([])
-    console.error = oldConsoleError
+it.skip('doctor should succeed when schema and db do match', async () => {
+  ctx.fixture('example-project')
+  const result = Doctor.new().parse([])
+  await expect(result).resolves.toEqual('Everything in sync 🔄')
+  expect(
+    ctx.mocked['console.error'].mock.calls.join('\n'),
+  ).toMatchInlineSnapshot(`👩‍⚕️🏥 Prisma Doctor checking the database...`)
+})
 
-    assert.deepEqual(errLog, [`👩‍⚕️🏥 Prisma Doctor checking the database...`])
-    assert.equal(result, 'Everything in sync 🔄')
+it('should fail when db is missing', async () => {
+  ctx.fixture('schema-db-out-of-sync')
+  ctx.fs.remove('dev.db')
+  const result = Doctor.new().parse([])
+  await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(
+    `P1003: SQLite database file doesn't exist`,
+  )
+})
 
-    process.chdir(cwd)
-  })
+it('should fail when Prisma schema is missing', async () => {
+  const result = Doctor.new().parse([])
+  await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
+          Could not find a schema.prisma file that is required for this command.
+          You can either provide it with --schema, set it as \`prisma.schema\` in your package.json or put it into the default location ./prisma/schema.prisma https://pris.ly/d/prisma-schema-location
+        `)
+})
 
-  it('should fail when schema and db dont match', async () => {
-    const tmpDir = tempy.directory()
-    await copy({
-      from: path.join(__dirname, 'fixtures/schema-db-out-of-sync'),
-      to: tmpDir,
-      recursive: true,
-    })
-    const cwd = process.cwd()
-    process.chdir(tmpDir)
+it('should fail when db is empty', async () => {
+  ctx.fixture('schema-db-out-of-sync')
+  ctx.fs.write('dev.db', '')
+  const result = Doctor.new().parse([])
+  await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
+          P4001
 
-    const doctor = Doctor.new()
-    const errLog = []
-    const oldConsoleError = console.error
-    console.error = (...args) => {
-      errLog.push(...args)
-    }
-    let err
-    try {
-      const result = await doctor.parse([])
-    } catch (e) {
-      err = e
-    }
-    console.error = oldConsoleError
+          The introspected database was empty: file:dev.db
 
-    assert.equal(
-      stripAnsi(err.message),
-      `
+        `)
+})
 
-Post
-↪ Model is missing in database
+it('should fail when schema and db do not match', async () => {
+  ctx.fixture('schema-db-out-of-sync')
+  const result = Doctor.new().parse([])
+  await expect(result).rejects.toThrowErrorMatchingSnapshot(`
 
 
-User
-↪ Field name is missing in database
-↪ Field posts is missing in database
-`,
-    )
+                    NewPost
+                    ↪ Model is missing in database
 
-    process.chdir(cwd)
-  })
+
+                    User
+                    ↪ Field newName is missing in database
+                    ↪ Field newPosts is missing in database
+
+                `)
 })

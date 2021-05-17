@@ -2,9 +2,10 @@ import chalk from 'chalk'
 import { ChildProcess, spawn } from 'child_process'
 import Debug from '@prisma/debug'
 import byline from './utils/byline'
-const debugRpc = Debug('IntrospectionEngine:rpc')
-const debugStderr = Debug('IntrospectionEngine:stderr')
-const debugStdin = Debug('IntrospectionEngine:stdin')
+const debugCli = Debug('prisma:introspectionEngine:cli')
+const debugRpc = Debug('prisma:introspectionEngine:rpc')
+const debugStderr = Debug('prisma:introspectionEngine:stderr')
+const debugStdin = Debug('prisma:introspectionEngine:stdin')
 import fs from 'fs'
 import { now } from './utils/now'
 import { RustPanic, ErrorArea } from './panic'
@@ -43,6 +44,7 @@ export class IntrospectionError extends Error {
 
 // See https://github.com/prisma/prisma-engines/blob/ReIntrospection/introspection-engine/connectors/sql-introspection-connector/src/warnings.rs
 export type IntrospectionWarnings =
+  | IntrospectionWarningsUnhandled
   | IntrospectionWarningsInvalidReintro
   | IntrospectionWarningsMissingUnique
   | IntrospectionWarningsEmptyFieldName
@@ -53,6 +55,10 @@ export type IntrospectionWarnings =
   | IntrospectionWarningsFieldModelReintro
   | IntrospectionWarningsFieldMapReintro
   | IntrospectionWarningsEnumMapReintro
+  | IntrospectionWarningsEnumValueMapReintro
+  | IntrospectionWarningsCuidReintro
+  | IntrospectionWarningsUuidReintro
+  | IntrospectionWarningsUpdatedAtReintro
 
 type AffectedModel = { model: string }[]
 type AffectedModelAndField = { model: string; field: string }[]
@@ -76,6 +82,10 @@ interface IntrospectionWarning {
     | null
 }
 
+interface IntrospectionWarningsUnhandled extends IntrospectionWarning {
+  code: number
+  affected: any
+}
 interface IntrospectionWarningsInvalidReintro extends IntrospectionWarning {
   code: 0
   affected: null
@@ -115,6 +125,23 @@ interface IntrospectionWarningsFieldMapReintro extends IntrospectionWarning {
 interface IntrospectionWarningsEnumMapReintro extends IntrospectionWarning {
   code: 9
   affected: AffectedEnum
+}
+interface IntrospectionWarningsEnumValueMapReintro
+  extends IntrospectionWarning {
+  code: 10
+  affected: AffectedEnum
+}
+interface IntrospectionWarningsCuidReintro extends IntrospectionWarning {
+  code: 11
+  affected: AffectedModelAndField
+}
+interface IntrospectionWarningsUuidReintro extends IntrospectionWarning {
+  code: 12
+  affected: AffectedModelAndField
+}
+interface IntrospectionWarningsUpdatedAtReintro extends IntrospectionWarning {
+  code: 13
+  affected: AffectedModelAndField
 }
 
 export type IntrospectionSchemaVersion =
@@ -172,19 +199,22 @@ export class IntrospectionEngine {
       this.getRPCPayload('getDatabaseDescription', { schema }),
     )
   }
+  public getDatabaseVersion(schema: string): Promise<string> {
+    return this.runCommand(this.getRPCPayload('getDatabaseVersion', { schema }))
+  }
   public introspect(
     schema: string,
-    reintrospect?: Boolean,
-    clean?: Boolean,
+    force?: Boolean,
   ): Promise<{
     datamodel: string
     warnings: IntrospectionWarnings[]
     version: IntrospectionSchemaVersion
   }> {
     this.lastUrl = schema
-    return this.runCommand(
-      this.getRPCPayload('introspect', { schema, reintrospect, clean }),
-    )
+    return this.runCommand(this.getRPCPayload('introspect', { schema, force }))
+  }
+  public debugPanic(): Promise<any> {
+    return this.runCommand(this.getRPCPayload('debugPanic', undefined))
   }
   public listDatabases(schema: string): Promise<string[]> {
     this.lastUrl = schema
@@ -256,33 +286,28 @@ export class IntrospectionEngine {
 
           this.child.on('error', (err) => {
             console.error('[introspection-engine] error: %s', err)
-            reject(err)
+            this.child?.kill()
             this.rejectAll(err)
+            reject(err)
           })
 
           this.child.stdin?.on('error', (err) => {
             console.error(err)
+            this.child?.kill()
           })
 
           // eslint-disable-next-line @typescript-eslint/no-misused-promises
-          this.child.on('exit', async (code) => {
+          this.child.on('exit', (code) => {
             // handle panics
             this.isRunning = false
             if (code === 255 && this.lastError && this.lastError.is_panic) {
-              let sqlDump: string | undefined
-              if (this.lastUrl) {
-                try {
-                  sqlDump = await this.getDatabaseDescription(this.lastUrl)
-                } catch (e) {} // eslint-disable-line no-empty
-              }
               const err = new RustPanic(
                 this.lastError.message,
                 this.lastError.backtrace,
                 this.lastRequest,
                 ErrorArea.INTROSPECTION_CLI,
                 /* schemaPath */ undefined,
-                /* schema */ undefined,
-                sqlDump,
+                /* schema */ this.lastUrl,
               )
               this.rejectAll(err)
               reject(err)
@@ -293,10 +318,7 @@ export class IntrospectionEngine {
             if (code !== 0 || messages.includes('panicked at')) {
               let errorMessage =
                 chalk.red.bold('Error in introspection engine: ') + messages
-              if (messages.includes('\u001b[1;94m-->\u001b[0m')) {
-                errorMessage =
-                  `${chalk.red.bold('Schema parsing\n')}` + messages
-              } else if (this.lastError && this.lastError.msg === 'PANIC') {
+              if (this.lastError && this.lastError.msg === 'PANIC') {
                 errorMessage = serializePanic(this.lastError)
                 err = new IntrospectionPanic(
                   errorMessage,
@@ -333,7 +355,7 @@ export class IntrospectionEngine {
                 this.lastError = json
               }
             } catch (e) {
-              //
+              debugCli(e)
             }
           })
 
@@ -345,6 +367,7 @@ export class IntrospectionEngine {
             resolve()
           })
         } catch (e) {
+          this.child?.kill()
           reject(e)
         }
       },
@@ -352,6 +375,10 @@ export class IntrospectionEngine {
   }
   private async runCommand(request: RPCPayload): Promise<any> {
     await this.init()
+    if (process.env.FORCE_PANIC_INTROSPECTION_ENGINE) {
+      request = this.getRPCPayload('debugPanic', undefined)
+    }
+
     if (this.child?.killed) {
       throw new Error(
         `Can't execute ${JSON.stringify(
@@ -360,7 +387,7 @@ export class IntrospectionEngine {
       )
     }
     return new Promise((resolve, reject) => {
-      this.registerCallback(request.id, async (response, err) => {
+      this.registerCallback(request.id, (response, err) => {
         if (err) {
           return reject(err)
         }
@@ -368,26 +395,19 @@ export class IntrospectionEngine {
           resolve(response.result)
         } else {
           if (response.error) {
+            this.child?.kill()
             debugRpc(response)
             if (response.error.data?.is_panic) {
               const message =
                 response.error.data?.error?.message ?? response.error.message
-              // Handle error and displays the interactive dialog to send panic error
-              let sqlDump: string | undefined
-              if (this.lastUrl) {
-                try {
-                  sqlDump = await this.getDatabaseDescription(this.lastUrl)
-                } catch (e) {} // eslint-disable-line no-empty
-              }
               reject(
                 new RustPanic(
                   message,
                   message,
                   request,
                   ErrorArea.INTROSPECTION_CLI,
-                  undefined,
-                  undefined,
-                  sqlDump,
+                  /* schemaPath */ undefined,
+                  /* schema */ this.lastUrl,
                 ),
               )
             } else if (response.error.data?.message) {
@@ -475,11 +495,7 @@ Please put that file into a gist and post it in Slack.
       id: messageId++,
       jsonrpc: '2.0',
       method,
-      params: [
-        {
-          ...params,
-        },
-      ],
+      params: params ? [{ ...params }] : undefined,
     }
   }
 }

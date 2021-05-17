@@ -1,24 +1,29 @@
+/* eslint-disable eslint-comments/disable-enable-pair, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/restrict-template-expressions */
+import { enginesVersion } from '@prisma/engines'
 import {
-  Command,
   arg,
+  Command,
   format,
-  HelpError,
+  Generator,
+  getCommandWithExecutor,
+  getGenerators,
   getSchemaPath,
+  HelpError,
+  highlightTS,
   isError,
+  link,
+  logger,
+  missingGeneratorMessage,
+  parseEnvValue,
 } from '@prisma/sdk'
 import chalk from 'chalk'
+import fs from 'fs'
 import logUpdate from 'log-update'
-import {
-  missingGeneratorMessage,
-  getGenerators,
-  highlightTS,
-  link,
-  Generator,
-} from '@prisma/sdk'
+import path from 'path'
+import resolvePkg from 'resolve-pkg'
+import { breakingChangesMessage } from './utils/breakingChanges'
 import { formatms } from './utils/formatms'
 import { simpleDebounce } from './utils/simpleDebounce'
-import fs from 'fs'
-import path from 'path'
 const pkg = eval(`require('../package.json')`)
 
 /**
@@ -29,22 +34,31 @@ export class Generate implements Command {
     return new Generate()
   }
 
-  // static help template
   private static help = format(`
-    Generate artifacts (e.g. Prisma Client)
+Generate artifacts (e.g. Prisma Client)
 
-    ${chalk.bold('Usage')}
+${chalk.bold('Usage')}
 
-    With an existing schema.prisma:
-      ${chalk.dim('$')} prisma generate
+  ${chalk.dim('$')} prisma generate [options]
 
-    Or specify a schema:
-      ${chalk.dim('$')} prisma generate --schema=./schema.prisma'
+${chalk.bold('Options')}
 
-    ${chalk.bold('Flags')}
+  -h, --help   Display this help message
+    --schema   Custom path to your Prisma schema
+     --watch   Watch the Prisma schema and rerun after a change
 
-      --watch    Watches the Prisma project file
-  `)
+${chalk.bold('Examples')}
+
+  With an existing Prisma schema
+    ${chalk.dim('$')} prisma generate
+
+  Or specify a schema
+    ${chalk.dim('$')} prisma generate --schema=./schema.prisma
+
+  Watch Prisma schema file and rerun after each change
+    ${chalk.dim('$')} prisma generate --watch
+
+`)
 
   private logText = ''
   private hasGeneratorErrored = false
@@ -58,7 +72,7 @@ export class Generate implements Command {
           ? chalk.dim(
               ` to .${path.sep}${path.relative(
                 process.cwd(),
-                generator.options!.generator.output!,
+                parseEnvValue(generator.options!.generator.output!),
               )}`,
             )
           : ''
@@ -69,10 +83,11 @@ export class Generate implements Command {
         try {
           await generator.generate()
           const after = Date.now()
+          const version = generator.manifest?.version
           message.push(
-            `✔ Generated ${chalk.bold(name!)}${toStr} in ${formatms(
-              after - before,
-            )}\n`,
+            `✔ Generated ${chalk.bold(name!)}${
+              version ? ` (${version})` : ''
+            }${toStr} in ${formatms(after - before)}\n`,
           )
           generator.stop()
         } catch (err) {
@@ -86,18 +101,22 @@ export class Generate implements Command {
     },
   )
 
-  // parse arguments
   public async parse(argv: string[]): Promise<string | Error> {
-    // parse the arguments according to the spec
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--watch': Boolean,
       '--schema': String,
+      // Only used for checkpoint information
+      '--postinstall': String,
+      '--telemetry-information': String,
     })
 
     const isPostinstall = process.env.PRISMA_GENERATE_IN_POSTINSTALL
-
+    let cwd = process.cwd()
+    if (isPostinstall && isPostinstall !== 'true') {
+      cwd = isPostinstall
+    }
     if (isError(args)) {
       return this.help(args.message)
     }
@@ -108,33 +127,40 @@ export class Generate implements Command {
 
     const watchMode = args['--watch'] || false
 
-    const schemaPath = await getSchemaPath(args['--schema'])
+    const schemaPath = await getSchemaPath(args['--schema'], { cwd })
     if (!schemaPath) {
       if (isPostinstall) {
-        console.error(`${chalk.yellow(
-          'warning',
-        )} The postinstall script automatically ran \`prisma generate\` and did not find your \`prisma/schema.prisma\`.
-If you have a Prisma Schema file in a custom path, you will need to run
+        logger.warn(`The postinstall script automatically ran \`prisma generate\` and did not find your \`prisma/schema.prisma\`.
+If you have a Prisma schema file in a custom path, you will need to run
 \`prisma generate --schema=./path/to/your/schema.prisma\` to generate Prisma Client.
-If you do not have a Prisma Schema file yet, you can ignore this message.`)
+If you do not have a Prisma schema file yet, you can ignore this message.`)
         return ''
       }
       throw new Error(
-        `Either provide ${chalk.greenBright('--schema')} ${chalk.bold(
-          'or',
-        )} make sure that you are in a folder with a ${chalk.greenBright(
+        `Could not find a ${chalk.bold(
           'schema.prisma',
-        )} file.`,
+        )} file that is required for this command.\nYou can either provide it with ${chalk.greenBright(
+          '--schema',
+        )}, set it as \`prisma.schema\` in your package.json or put it into the default location ${chalk.greenBright(
+          './prisma/schema.prisma',
+        )} https://pris.ly/d/prisma-schema-location`,
       )
     }
 
-    let isJSClient
+    logger.log(
+      chalk.dim(
+        `Prisma schema loaded from ${path.relative(process.cwd(), schemaPath)}`,
+      ),
+    )
+
+    let hasJsClient
     let generators: Generator[] | undefined
+    let clientGeneratorVersion: string | null = null
     try {
       generators = await getGenerators({
         schemaPath,
         printDownloadProgress: !watchMode,
-        version: pkg.prisma.version,
+        version: enginesVersion,
         cliVersion: pkg.version,
       })
 
@@ -142,10 +168,15 @@ If you do not have a Prisma Schema file yet, you can ignore this message.`)
         this.logText += `${missingGeneratorMessage}\n`
       } else {
         // Only used for CLI output, ie Go client doesn't want JS example output
-        isJSClient = generators.find(
+        const jsClient = generators.find(
           (g) =>
-            g.options && g.options.generator.provider === 'prisma-client-js',
+            g.options &&
+            parseEnvValue(g.options.generator.provider) === 'prisma-client-js',
         )
+
+        clientGeneratorVersion = jsClient?.manifest?.version ?? null
+
+        hasJsClient = Boolean(jsClient)
 
         try {
           await this.runGenerate({ generators })
@@ -159,7 +190,7 @@ If you do not have a Prisma Schema file yet, you can ignore this message.`)
           'info',
         )} The postinstall script automatically ran \`prisma generate\`, which failed.
 The postinstall script still succeeds but won't generate the Prisma Client.
-Please run \`prisma generate\` to see the errors.`)
+Please run \`${getCommandWithExecutor('prisma generate')}\` to see the errors.`)
         return ''
       }
       if (watchMode) {
@@ -169,35 +200,91 @@ Please run \`prisma generate\` to see the errors.`)
       }
     }
 
+    let printBreakingChangesMessage = false
+    if (hasJsClient) {
+      try {
+        const clientVersionBeforeGenerate = getCurrentClientVersion()
+        if (
+          clientVersionBeforeGenerate &&
+          typeof clientVersionBeforeGenerate === 'string'
+        ) {
+          const minor = clientVersionBeforeGenerate.split('.')[1]
+          if (parseInt(minor, 10) < 12) {
+            printBreakingChangesMessage = true
+          }
+        }
+      } catch (e) {
+        //
+      }
+    }
+
+    if (isPostinstall && printBreakingChangesMessage && logger.should.warn) {
+      // skipping generate
+      return `There have been breaking changes in Prisma Client since you updated last time.
+Please run \`prisma generate\` manually.`
+    }
+
     const watchingText = `\n${chalk.green('Watching...')} ${chalk.dim(
       schemaPath,
     )}\n`
 
     if (!watchMode) {
-      const hint = `
-You can now start using Prisma Client in your code:
+      const prismaClientJSGenerator = generators?.find(
+        (g) =>
+          g.options?.generator.provider &&
+          parseEnvValue(g.options?.generator.provider) === 'prisma-client-js',
+      )
+      let hint = ''
+      if (prismaClientJSGenerator) {
+        const importPath = prismaClientJSGenerator.options?.generator
+          ?.isCustomOutput
+          ? prefixRelativePathIfNecessary(
+              path.relative(
+                process.cwd(),
+                parseEnvValue(
+                  prismaClientJSGenerator.options.generator.output!,
+                ),
+              ),
+            )
+          : '.prisma/client'
+        const breakingChangesStr = printBreakingChangesMessage
+          ? `
 
-\`\`\`
+${breakingChangesMessage}`
+          : ''
+
+        const versionsOutOfSync =
+          clientGeneratorVersion && pkg.version !== clientGeneratorVersion
+        const versionsWarning =
+          versionsOutOfSync && logger.should.warn
+            ? `\n\n${chalk.yellow.bold('warn')} Versions of ${chalk.bold(
+                `prisma@${pkg.version}`,
+              )} and ${chalk.bold(
+                `@prisma/client@${clientGeneratorVersion}`,
+              )} don't match.
+This might lead to unexpected behavior.
+Please make sure they have the same version.`
+            : ''
+
+        hint = `You can now start using Prisma Client in your code. Reference: ${link(
+          'https://pris.ly/d/client',
+        )}
+${chalk.dim('```')}
 ${highlightTS(`\
-import { PrismaClient } from '@prisma/client'
-// or const { PrismaClient } = require('@prisma/client')
-
+import { PrismaClient } from '${importPath}'
 const prisma = new PrismaClient()`)}
-\`\`\`
-
-Explore the full API: ${link('http://pris.ly/d/client')}`
+${chalk.dim('```')}${breakingChangesStr}${versionsWarning}`
+      }
       const message =
         '\n' +
         this.logText +
-        (isJSClient && !this.hasGeneratorErrored ? hint : '')
+        (hasJsClient && !this.hasGeneratorErrored ? hint : '')
 
       if (this.hasGeneratorErrored) {
         if (isPostinstall) {
-          console.error(`${chalk.blueBright(
-            'info',
-          )} The postinstall script automatically ran \`prisma generate\`, which failed.
+          logger.info(`The postinstall script automatically ran \`prisma generate\`, which failed.
 The postinstall script still succeeds but won't generate the Prisma Client.
-Please run \`prisma generate\` to see the errors.`)
+Please run \`${getCommandWithExecutor('prisma generate')}\` to see the errors.`)
           return ''
         }
         throw new Error(message)
@@ -214,7 +301,7 @@ Please run \`prisma generate\` to see the errors.`)
             generatorsWatch = await getGenerators({
               schemaPath,
               printDownloadProgress: !watchMode,
-              version: pkg.prisma.version,
+              version: enginesVersion,
               cliVersion: pkg.version,
             })
 
@@ -254,4 +341,42 @@ Please run \`prisma generate\` to see the errors.`)
     }
     return Generate.help
   }
+}
+
+function prefixRelativePathIfNecessary(relativePath: string): string {
+  if (relativePath.startsWith('..')) {
+    return relativePath
+  }
+
+  return `./${relativePath}`
+}
+
+function getCurrentClientVersion(): string | null {
+  try {
+    let pkgPath = resolvePkg('.prisma/client', { cwd: process.cwd() })
+    if (!pkgPath) {
+      const potentialPkgPath = path.join(
+        process.cwd(),
+        'node_modules/.prisma/client',
+      )
+      if (fs.existsSync(potentialPkgPath)) {
+        pkgPath = potentialPkgPath
+      }
+    }
+    if (pkgPath) {
+      const indexPath = path.join(pkgPath, 'index.js')
+      if (fs.existsSync(indexPath)) {
+        const program = require(indexPath)
+        return (
+          program?.prismaVersion?.client ??
+          program?.Prisma?.prismaVersion?.client
+        )
+      }
+    }
+  } catch (e) {
+    //
+    return null
+  }
+
+  return null
 }

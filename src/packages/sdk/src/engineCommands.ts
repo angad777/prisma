@@ -1,47 +1,22 @@
+import Debug from '@prisma/debug'
+import { DataSource, DMMF, GeneratorConfig } from '@prisma/generator-helper'
 import chalk from 'chalk'
 import execa from 'execa'
-import path from 'path'
-import { DMMF, DataSource, GeneratorConfig } from '@prisma/generator-helper'
-import tmpWrite from 'temp-write'
 import fs from 'fs'
+import tmpWrite from 'temp-write'
 import { promisify } from 'util'
-import Debug from '@prisma/debug'
-import { resolveBinary } from './resolveBinary'
-const debug = Debug('engineCommands')
+import { EngineType, resolveBinary } from './resolveBinary'
+const debug = Debug('prisma:engineCommands')
 
 const unlink = promisify(fs.unlink)
 
-const MAX_BUFFER = 1000 * 1000 * 1000
+const MAX_BUFFER = 1_000_000_000
 
 export interface ConfigMetaFormat {
   datasources: DataSource[]
   generators: GeneratorConfig[]
+  warnings: string[]
 }
-
-/**
- * This annotation is used for `node-file-trace`
- * See https://github.com/zeit/node-file-trace/issues/104
- */
-
-path.join(__dirname, '../query-engine-darwin')
-path.join(__dirname, '../introspection-engine-darwin')
-path.join(__dirname, '../prisma-fmt-darwin')
-
-path.join(__dirname, '../query-engine-debian-openssl-1.0.x')
-path.join(__dirname, '../introspection-engine-debian-openssl-1.0.x')
-path.join(__dirname, '../prisma-fmt-debian-openssl-1.0.x')
-
-path.join(__dirname, '../query-engine-debian-openssl-1.1.x')
-path.join(__dirname, '../introspection-engine-debian-openssl-1.1.x')
-path.join(__dirname, '../prisma-fmt-debian-openssl-1.1.x')
-
-path.join(__dirname, '../query-engine-rhel-openssl-1.0.x')
-path.join(__dirname, '../introspection-engine-rhel-openssl-1.0.x')
-path.join(__dirname, '../prisma-fmt-rhel-openssl-1.0.x')
-
-path.join(__dirname, '../query-engine-rhel-openssl-1.1.x')
-path.join(__dirname, '../introspection-engine-rhel-openssl-1.1.x')
-path.join(__dirname, '../prisma-fmt-rhel-openssl-1.1.x')
 
 export type GetDMMFOptions = {
   datamodel?: string
@@ -49,7 +24,7 @@ export type GetDMMFOptions = {
   prismaPath?: string
   datamodelPath?: string
   retry?: number
-  enableExperimental?: string[]
+  previewFeatures?: string[]
 }
 
 export async function getDMMF({
@@ -58,7 +33,7 @@ export async function getDMMF({
   prismaPath: queryEnginePath,
   datamodelPath,
   retry = 4,
-  enableExperimental,
+  previewFeatures,
 }: GetDMMFOptions): Promise<DMMF.Document> {
   queryEnginePath = await resolveBinary('query-engine', queryEnginePath)
   let result
@@ -78,28 +53,37 @@ export async function getDMMF({
     const options = {
       cwd,
       env: {
-        ...process.env,
         PRISMA_DML_PATH: tempDatamodelPath,
         RUST_BACKTRACE: '1',
         ...(process.env.NO_COLOR ? {} : { CLICOLOR_FORCE: '1' }),
       },
       maxBuffer: MAX_BUFFER,
     }
+    const getMessage = (flag: string) =>
+      `${chalk.blueBright(
+        'info',
+      )} The preview flag "${flag}" is not needed anymore, please remove it from your schema.prisma`
 
-    if (enableExperimental) {
-      enableExperimental = enableExperimental.filter(
-        (e) => !['middlewares'].includes(e),
-      )
+    const removedFeatureFlagMap = {
+      insensitiveFilters: getMessage('insensitiveFilters'),
+      atomicNumberOperations: getMessage('atomicNumberOperations'),
+      connectOrCreate: getMessage('connectOrCreate'),
+      transaction: getMessage('transaction'),
+      transactionApi: getMessage('transactionApi'),
+      uncheckedScalarInputs: getMessage('uncheckedScalarInputs'),
+      nativeTypes: getMessage('nativeTypes'),
+      createMany: getMessage('createMany'),
+      groupBy: getMessage('groupBy'),
     }
 
-    const experimentalFlags =
-      enableExperimental &&
-      Array.isArray(enableExperimental) &&
-      enableExperimental.length > 0
-        ? [`--enable-experimental=${enableExperimental.join(',')}`]
-        : []
+    previewFeatures?.forEach((f) => {
+      const removedMessage = removedFeatureFlagMap[f]
+      if (removedMessage && !process.env.PRISMA_HIDE_PREVIEW_FLAG_WARNINGS) {
+        console.warn(removedMessage)
+      }
+    })
 
-    const args = [...experimentalFlags, '--enable-raw-queries', 'cli', 'dmmf']
+    const args = ['--enable-raw-queries', 'cli', 'dmmf']
 
     result = await execa(queryEnginePath, args, options)
 
@@ -207,16 +191,17 @@ export async function getConfig({
     }
   }
 
+  const engineArgs = []
+
   const args = ignoreEnvVarErrors ? ['--ignoreEnvVarErrors'] : []
 
   try {
     const result = await execa(
       queryEnginePath,
-      ['cli', 'get-config', ...args],
+      [...engineArgs, 'cli', 'get-config', ...args],
       {
         cwd,
         env: {
-          ...process.env,
           PRISMA_DML_PATH: tempDatamodelPath,
           RUST_BACKTRACE: '1',
         },
@@ -228,56 +213,97 @@ export async function getConfig({
       await unlink(tempDatamodelPath)
     }
 
-    return JSON.parse(result.stdout)
+    const data: ConfigMetaFormat = JSON.parse(result.stdout)
+
+    if (
+      data.datasources?.[0]?.provider?.[0] === 'sqlite' &&
+      data.generators.some((g) => g.previewFeatures.includes('createMany'))
+    ) {
+      throw new Error(`Database provider "sqlite" and the preview feature "createMany" can't be used at the same time.
+Please either remove the "createMany" feature flag or use any other database type that Prisma supports: postgres, mysql or sqlserver.`)
+    }
+
+    return data
   } catch (e) {
-    if (e.stderr) {
-      throw new Error(chalk.redBright.bold('Get config ') + e.stderr)
+    if (e.stderr || e.stdout) {
+      const error = e.stderr ? e.stderr : e.stout
+      let jsonError, message
+      try {
+        jsonError = JSON.parse(error)
+        message = `${chalk.redBright.bold('Get config ')}\n${chalk.redBright(
+          jsonError.message,
+        )}\n`
+        if (jsonError.error_code) {
+          if (jsonError.error_code === 'P1012') {
+            message =
+              chalk.redBright(`Schema Parsing ${jsonError.error_code}\n\n`) +
+              message
+          } else {
+            message = chalk.redBright(`${jsonError.error_code}\n\n`) + message
+          }
+        }
+      } catch (e) {
+        // if JSON parse / pretty handling fails, fallback to simple printing
+        throw new Error(chalk.redBright.bold('Get config ') + error)
+      }
+
+      throw new Error(message)
     }
-    if (e.stdout) {
-      throw new Error(chalk.redBright.bold('Get config ') + e.stdout)
-    }
-    throw new Error(chalk.redBright.bold('Get config ') + e)
+
+    throw new Error(chalk.redBright.bold('Get config: ') + e)
   }
 }
 
-type FormatOptions = {
-  schemaPath: string
-}
-
+// can be used by passing either
+// the schema as a string
+// or a path to the schema file
+export async function formatSchema({ schema }: { schema: string })
+export async function formatSchema({ schemaPath }: { schemaPath: string })
 export async function formatSchema({
   schemaPath,
-}: FormatOptions): Promise<string> {
-  if (!fs.existsSync(schemaPath)) {
-    throw new Error(`Schema at ${schemaPath} does not exist.`)
+  schema,
+}: {
+  schemaPath?: string
+  schema?: string
+}): Promise<string> {
+  if (!schema && !schemaPath) {
+    throw new Error(`Parameter schema or schemaPath must be passed.`)
   }
+
   const prismaFmtPath = await resolveBinary('prisma-fmt')
   const showColors = !process.env.NO_COLOR && process.stdout.isTTY
 
   const options = {
     env: {
-      ...process.env,
       RUST_BACKTRACE: '1',
       ...(showColors ? { CLICOLOR_FORCE: '1' } : {}),
     },
     maxBuffer: MAX_BUFFER,
-  }
+  } as execa.Options
 
-  const result = await execa(
-    prismaFmtPath,
-    ['format', '-i', schemaPath],
-    options,
-  )
+  let result
+  if (schemaPath) {
+    if (!fs.existsSync(schemaPath)) {
+      throw new Error(`Schema at ${schemaPath} does not exist.`)
+    }
+    result = await execa(prismaFmtPath, ['format', '-i', schemaPath], options)
+  } else if (schema) {
+    result = await execa(prismaFmtPath, ['format'], {
+      ...options,
+      input: schema,
+    })
+  }
 
   return result.stdout
 }
 
-export async function getVersion(enginePath?: string): Promise<string> {
-  enginePath = await resolveBinary('query-engine', enginePath)
+export async function getVersion(
+  enginePath?: string,
+  binaryName: EngineType = 'query-engine',
+): Promise<string> {
+  enginePath = await resolveBinary(binaryName, enginePath)
 
   const result = await execa(enginePath, ['--version'], {
-    env: {
-      ...process.env,
-    },
     maxBuffer: MAX_BUFFER,
   })
 

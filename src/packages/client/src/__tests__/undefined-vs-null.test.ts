@@ -33,7 +33,7 @@ describe('select validation', () => {
       document.validate(select)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.updateOnePost()\` invocation:
 
         {
@@ -48,7 +48,7 @@ describe('select validation', () => {
 
         Argument id for data.id must not be null. Please use undefined instead.
 
-        "
+
       `)
     }
   })
@@ -72,21 +72,21 @@ describe('select validation', () => {
       document.validate(select)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
-        Invalid \`prisma.createOnePost()\` invocation:
 
-        {
-          data: {
-            published: true,
-            title: null
-                   ~~~~
-          }
-        }
+                                                        Invalid \`prisma.createOnePost()\` invocation:
 
-        Argument title: Got invalid value null on prisma.createOnePost. Provided null, expected String.
+                                                        {
+                                                          data: {
+                                                            published: true,
+                                                            title: null
+                                                                   ~~~~
+                                                          }
+                                                        }
 
-        "
-      `)
+                                                        Argument title: Got invalid value null on prisma.createOnePost. Provided null, expected String.
+
+
+                                          `)
     }
   })
 })

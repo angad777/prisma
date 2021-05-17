@@ -1,27 +1,10 @@
 import { DMMF as ExternalDMMF } from '@prisma/generator-helper'
 import pluralize from 'pluralize'
 import { DMMF } from './dmmf-types'
-import { lowerCase } from './utils/common'
-import { uniqueBy } from './utils/uniqueBy'
+import { capitalize, lowerCase } from './utils/common'
 
-function transformFieldKind(model: ExternalDMMF.Model): DMMF.Model {
-  return {
-    ...model,
-    fields: model.fields.map((field) => ({
-      ...field,
-      kind: field.kind === 'relation' ? ('object' as any) : field.kind,
-    })),
-  }
-}
-
-function transformDatamodel(datamodel: ExternalDMMF.Datamodel): DMMF.Datamodel {
-  return {
-    enums: datamodel.enums.map((enumValue) => ({
-      ...enumValue,
-      values: enumValue.values.map((v) => v.name),
-    })),
-    models: datamodel.models.map(transformFieldKind),
-  }
+export function getCountAggregateOutputName(modelName: string): string {
+  return `${capitalize(modelName)}CountAggregateOutputType`
 }
 
 /**
@@ -31,61 +14,17 @@ function transformDatamodel(datamodel: ExternalDMMF.Datamodel): DMMF.Datamodel {
 export function externalToInternalDmmf(
   document: ExternalDMMF.Document,
 ): DMMF.Document {
-  const datamodel = transformDatamodel(document.datamodel)
   return {
-    datamodel,
-    mappings: getMappings(document.mappings, datamodel),
-    schema: transformSchema(document.schema),
-  }
-}
-
-function transformSchema(schema: ExternalDMMF.Schema): DMMF.Schema {
-  return {
-    enums: schema.enums,
-    inputTypes: schema.inputTypes.map((t) => ({
-      ...t,
-      fields: uniqueBy(transformArgs(t.fields), (f) => f.name),
-    })),
-    outputTypes: schema.outputTypes.map((o) => ({
-      ...o,
-      fields: o.fields.map((f) => ({ ...f, args: transformArgs(f.args) })),
-    })),
-  }
-}
-
-function transformArgs(args: ExternalDMMF.SchemaArg[]): DMMF.SchemaArg[] {
-  return args.map(transformArg)
-}
-
-function fixOrderByEnum(arg: ExternalDMMF.SchemaArg): ExternalDMMF.SchemaArg {
-  if (arg.name === 'orderBy' && arg.inputType.type.endsWith('OrderByInput')) {
-    return {
-      name: arg.name,
-      inputType: {
-        isList: arg.inputType.isList,
-        isRequired: arg.inputType.isRequired,
-        isNullable: arg.inputType.isNullable,
-        type: arg.inputType.type,
-        kind: 'object',
-      },
-    }
-  }
-  return arg
-}
-
-function transformArg(argBefore: ExternalDMMF.SchemaArg): DMMF.SchemaArg {
-  const arg = fixOrderByEnum(argBefore)
-  return {
-    name: arg.name,
-    inputType: [arg.inputType],
+    ...document,
+    mappings: getMappings(document.mappings, document.datamodel),
   }
 }
 
 function getMappings(
-  mappings: ExternalDMMF.Mapping[],
+  mappings: ExternalDMMF.Mappings,
   datamodel: DMMF.Datamodel,
-): DMMF.Mapping[] {
-  return mappings
+): DMMF.Mappings {
+  const modelOperations = mappings.modelOperations
     .filter((mapping) => {
       const model = datamodel.models.find((m) => m.name === mapping.model)
       if (!model) {
@@ -96,14 +35,22 @@ function getMappings(
     .map((mapping: any) => ({
       model: mapping.model,
       plural: pluralize(lowerCase(mapping.model)),
-      findOne: mapping.findSingle || mapping.findOne,
+      findUnique: mapping.findUnique || mapping.findSingle,
+      findFirst: mapping.findFirst,
       findMany: mapping.findMany,
       create: mapping.createOne || mapping.createSingle || mapping.create,
+      createMany: mapping.createMany,
       delete: mapping.deleteOne || mapping.deleteSingle || mapping.delete,
       update: mapping.updateOne || mapping.updateSingle || mapping.update,
       deleteMany: mapping.deleteMany,
       updateMany: mapping.updateMany,
       upsert: mapping.upsertOne || mapping.upsertSingle || mapping.upsert,
       aggregate: mapping.aggregate,
+      groupBy: mapping.groupBy,
     }))
+
+  return {
+    modelOperations,
+    otherOperations: mappings.otherOperations,
+  }
 }

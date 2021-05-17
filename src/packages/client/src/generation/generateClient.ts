@@ -1,23 +1,23 @@
-import copy from '@apexearth/copy'
 import {
   BinaryPaths,
   DataSource,
   DMMF,
   GeneratorConfig,
 } from '@prisma/generator-helper'
+import { getVersion } from '@prisma/sdk/dist/engineCommands'
+import copy from '@timsuchanek/copy'
+import chalk from 'chalk'
 import fs from 'fs'
 import makeDir from 'make-dir'
 import path from 'path'
-import chalk from 'chalk'
+import pkgUp from 'pkg-up'
 import { promisify } from 'util'
 import { DMMF as PrismaClientDMMF } from '../runtime/dmmf-types'
 import { Dictionary } from '../runtime/utils/common'
-import { getPrismaClientDMMF } from './getDMMF'
 import { resolveDatasources } from '../utils/resolveDatasources'
-import { extractSqliteSources } from './extractSqliteSources'
-import { TSClient, TS, JS } from './TSClient'
-import { getVersion } from '@prisma/sdk/dist/engineCommands'
-import pkgUp from 'pkg-up'
+import { getPrismaClientDMMF } from './getDMMF'
+import { JS, TS, TSClient } from './TSClient'
+import { BrowserJS } from './TSClient/Generatable'
 
 const remove = promisify(fs.unlink)
 const writeFile = promisify(fs.writeFile)
@@ -34,6 +34,7 @@ export class DenylistError extends Error {
 }
 
 export interface GenerateClientOptions {
+  projectRoot?: string
   datamodel: string
   datamodelPath: string
   browser?: boolean
@@ -49,6 +50,7 @@ export interface GenerateClientOptions {
   copyRuntime?: boolean
   engineVersion: string
   clientVersion: string
+  activeProvider: string
 }
 
 export interface BuildClientResult {
@@ -69,30 +71,34 @@ export async function buildClient({
   datasources,
   engineVersion,
   clientVersion,
+  projectRoot,
+  activeProvider,
 }: GenerateClientOptions): Promise<BuildClientResult> {
   const document = getPrismaClientDMMF(dmmf)
-
+  const useNapi =
+    generator?.previewFeatures?.includes('nApi') ||
+    process.env.PRISMA_FORCE_NAPI === 'true'
   const client = new TSClient({
     document,
     runtimePath,
     browser,
     datasources: resolveDatasources(datasources, schemaDir, outputDir),
-    sqliteDatasourceOverrides: extractSqliteSources(
-      datamodel,
-      schemaDir,
-      outputDir,
-    ),
     generator,
-    platforms: Object.keys(binaryPaths.queryEngine!),
+    platforms: useNapi
+      ? Object.keys(binaryPaths.libqueryEngineNapi!)
+      : Object.keys(binaryPaths.queryEngine!),
     schemaDir,
     outputDir,
     clientVersion,
     engineVersion,
+    projectRoot: projectRoot!,
+    activeProvider,
   })
 
   const fileMap = {
     'index.d.ts': TS(client),
     'index.js': JS(client),
+    'index-browser.js': BrowserJS(client),
   }
 
   return {
@@ -102,6 +108,9 @@ export async function buildClient({
 }
 
 async function getDotPrismaDir(outputDir: string): Promise<string> {
+  if (outputDir.endsWith('node_modules/@prisma/client')) {
+    return path.join(outputDir, '../../.prisma/client')
+  }
   if (
     process.env.INIT_CWD &&
     process.env.npm_lifecycle_event === 'postinstall' &&
@@ -138,15 +147,21 @@ export async function generateClient({
   copyRuntime,
   clientVersion,
   engineVersion,
+  activeProvider,
 }: GenerateClientOptions): Promise<BuildClientResult | undefined> {
   const useDotPrisma = testMode ? !runtimePath : !generator?.isCustomOutput
-
+  const useNAPI =
+    generator?.previewFeatures?.includes('nApi') ||
+    process.env.PRISMA_FORCE_NAPI === 'true'
   runtimePath =
     runtimePath || (useDotPrisma ? '@prisma/client/runtime' : './runtime')
 
   const finalOutputDir = useDotPrisma
     ? await getDotPrismaDir(outputDir)
     : outputDir
+
+  const packageRoot = await pkgUp({ cwd: path.dirname(finalOutputDir) })
+  const projectRoot = packageRoot ? path.dirname(packageRoot) : process.cwd()
 
   const { prismaClientDmmf, fileMap } = await buildClient({
     datamodel,
@@ -162,12 +177,11 @@ export async function generateClient({
     binaryPaths,
     clientVersion,
     engineVersion,
+    projectRoot,
+    activeProvider,
   })
 
-  const denylistsErrors = validateDmmfAgainstDenylists(
-    prismaClientDmmf,
-    generator?.previewFeatures,
-  )
+  const denylistsErrors = validateDmmfAgainstDenylists(prismaClientDmmf)
 
   if (denylistsErrors) {
     let message = `${chalk.redBright.bold(
@@ -219,17 +233,28 @@ export async function generateClient({
       })
     }
   }
+  const enginePath = useNAPI
+    ? binaryPaths.libqueryEngineNapi
+    : binaryPaths.queryEngine
 
-  if (!binaryPaths.queryEngine) {
+  if (!enginePath) {
     throw new Error(
-      `Prisma Client needs \`queryEngine\` in the \`binaryPaths\` object.`,
+      `Prisma Client needs \`${
+        useNAPI ? 'libqueryEngineNapi' : 'queryEngine'
+      }\` in the \`binaryPaths\` object.`,
     )
   }
-
   if (transpile) {
-    for (const filePath of Object.values(binaryPaths.queryEngine)) {
+    if (process.env.NETLIFY) {
+      await makeDir('/tmp/prisma-engines')
+    }
+
+    for (const [binaryTarget, filePath] of Object.entries(enginePath)) {
       const fileName = path.basename(filePath)
-      const target = path.join(finalOutputDir, fileName)
+      const target =
+        process.env.NETLIFY && binaryTarget !== 'rhel-openssl-1.0.x'
+          ? path.join('/tmp/prisma-engines', fileName)
+          : path.join(finalOutputDir, fileName)
       const [sourceFileSize, targetFileSize] = await Promise.all([
         fileSize(filePath),
         fileSize(target),
@@ -237,8 +262,12 @@ export async function generateClient({
 
       // If the target doesn't exist yet, copy it
       if (!targetFileSize) {
-        await copyFile(filePath, target)
-        continue
+        if (fs.existsSync(filePath)) {
+          await copyFile(filePath, target)
+          continue
+        } else {
+          throw new Error(`File at ${filePath} is required but was not present`)
+        }
       }
 
       // If target !== source size, they're definitely different, copy it
@@ -270,17 +299,20 @@ export async function generateClient({
     await copyFile(datamodelPath, datamodelTargetPath)
   }
 
-  const packageJsonTargetPath = path.join(finalOutputDir, 'package.json')
-  const pkgJson = JSON.stringify(
-    {
-      name: '.prisma/client',
-      main: 'index.js',
-      types: 'index.d.ts',
-    },
-    null,
-    2,
-  )
-  await writeFile(packageJsonTargetPath, pkgJson)
+  if (!generator?.isCustomOutput) {
+    const packageJsonTargetPath = path.join(finalOutputDir, 'package.json')
+    const pkgJson = JSON.stringify(
+      {
+        name: '.prisma/client',
+        main: 'index.js',
+        types: 'index.d.ts',
+        browser: 'index-browser.js',
+      },
+      null,
+      2,
+    )
+    await writeFile(packageJsonTargetPath, pkgJson)
+  }
 
   if (process.env.INIT_CWD) {
     const backupPath = path.join(
@@ -298,11 +330,8 @@ export async function generateClient({
     }
   }
 
-  if (transpile) {
-    await writeFile(path.join(outputDir, 'runtime/index.d.ts'), backup)
-  }
-
   const proxyIndexJsPath = path.join(outputDir, 'index.js')
+  const proxyIndexBrowserJsPath = path.join(outputDir, 'index-browser.js')
   const proxyIndexDTSPath = path.join(outputDir, 'index.d.ts')
   if (!fs.existsSync(proxyIndexJsPath)) {
     await copyFile(path.join(__dirname, '../../index.js'), proxyIndexJsPath)
@@ -312,136 +341,15 @@ export async function generateClient({
     await copyFile(path.join(__dirname, '../../index.d.ts'), proxyIndexDTSPath)
   }
 
+  if (!fs.existsSync(proxyIndexBrowserJsPath)) {
+    await copyFile(
+      path.join(__dirname, '../../index-browser.js'),
+      proxyIndexBrowserJsPath,
+    )
+  }
+
   return { prismaClientDmmf, fileMap }
 }
-
-const backup = `/// <reference types="node" />
-
-export { DMMF } from './dmmf-types'
-import { inspect } from "util";
-export declare type Value = string | number | boolean | object | null | undefined;
-export declare type RawValue = Value | Sql;
-
-/**
- * A SQL instance can be nested within each other to build SQL strings.
- */
-export declare class Sql {
-    values: Value[];
-    strings: string[];
-    rawStrings: ReadonlyArray<string>;
-    rawValues: ReadonlyArray<RawValue>;
-    constructor(rawStrings: ReadonlyArray<string>, rawValues: ReadonlyArray<RawValue>);
-    readonly text: string;
-    readonly sql: string;
-    [inspect.custom](): {
-        text: string;
-        sql: string;
-        values: Value[];
-    };
-}
-/**
- * Create a SQL query for a list of values.
- */
-export declare function join(values: RawValue[], separator?: string): Sql;
-/**
- * Create raw SQL statement.
- */
-export declare function raw(value: string): Sql;
-/**
- * Placeholder value for "no text".
- */
-export declare const empty: Sql;
-/**
- * Create a SQL object from a template string.
- */
-export declare function sqltag(strings: TemplateStringsArray, ...values: RawValue[]): Sql;
-/**
- * Standard \`sql\` tag.
- */
-
-
-export declare var Engine: any
-export declare type Engine = any
-
-// export declare var DMMF: any
-// export declare type DMMF = any
-
-export declare var DMMFClass: any
-export declare type DMMFClass = any
-
-export declare var deepGet: any
-export declare type deepGet = any
-
-export declare var chalk: any
-export declare type chalk = any
-
-export declare var deepSet: any
-export declare type deepSet = any
-
-export declare var makeDocument: any
-export declare type makeDocument = any
-
-export declare var transformDocument: any
-export declare type transformDocument = any
-
-export declare var debug: any
-export declare type debug = any
-
-export declare var debugLib: any
-export declare type debugLib = any
-
-export declare var InternalDatasource: any
-export declare type InternalDatasource = any
-
-export declare var Datasource: any
-export declare type Datasource = any
-
-export declare var printDatasources: any
-export declare type printDatasources = any
-
-export declare var printStack: any
-export declare type printStack = any
-
-export declare var mergeBy: any
-export declare type mergeBy = any
-
-export declare var unpack: any
-export declare type unpack = any
-
-export declare var getDMMF: any
-export declare type getDMMF = any
-
-export declare var stripAnsi: any
-export declare type stripAnsi = any
-
-export declare var parseDotenv: any
-export declare type parseDotenv = any
-
-export declare var sqlTemplateTag: any
-export declare type sqlTemplateTag = any
-
-export declare class PrismaClientKnownRequestError extends Error {
-  code: string;
-  meta?: object;
-  constructor(message: string, code: string, meta?: any);
-}
-
-export declare class PrismaClientUnknownRequestError extends Error {
-  constructor(message: string);
-}
-
-export declare class PrismaClientRustPanicError extends Error {
-    constructor(message: string);
-}
-
-export declare class PrismaClientInitializationError extends Error {
-    constructor(message: string);
-}
-
-export declare class PrismaClientValidationError extends Error {
-    constructor(message: string);
-}
-`
 
 async function fileSize(name: string): Promise<number | null> {
   try {
@@ -454,7 +362,6 @@ async function fileSize(name: string): Promise<number | null> {
 
 function validateDmmfAgainstDenylists(
   prismaClientDmmf: PrismaClientDMMF.Document,
-  previewFeatures: string[] = [],
 ): Error[] | null {
   const errorArray = [] as Error[]
 
@@ -462,68 +369,10 @@ function validateDmmfAgainstDenylists(
     // A copy of this list is also in prisma-engines. Any edit should be done in both places.
     // https://github.com/prisma/prisma-engines/blob/master/libs/datamodel/core/src/transform/ast_to_dml/reserved_model_names.rs
     models: [
-      'dmmf',
-      'PromiseType',
-      'PromiseReturnType',
-      'Enumerable',
-      'MergeTruthyValues',
-      'CleanupNever',
-      'Subset',
-      'AtLeastOne',
-      'atMostOne',
-      'OnlyOne',
-      'StringFilter',
-      'IDFilter',
-      'FloatFilter',
-      'IntFilter',
-      'BooleanFilter',
-      'DateTimeFilter',
-      'NullableStringFilter',
-      'NullableIDFilter',
-      'NullableFloatFilter',
-      'NullableIntFilter',
-      'NullableBooleanFilter',
-      'NullableDateTimeFilter',
-      'PrismaClientFetcher',
+      // Reserved Prisma keywords
       'PrismaClient',
-      'Engine',
-      'BatchPayload',
-      'Datasources',
-      'ErrorFormat',
-      'Hooks',
-      'LogLevel',
-      'LogDefinition',
-      'GetLogType',
-      'GetEvents',
-      'QueryEvent',
-      'LogEvent',
-      'ModelDelegate',
-      'QueryDelegate',
-      'missingArg',
-      'ArgError',
-      'InvalidFieldError',
-      'InvalidFieldNameError',
-      'InvalidFieldTypeError',
-      'EmptySelectError',
-      'NoTrueSelectError',
-      'IncludeAndSelectError',
-      'EmptyIncludeError',
-      'InvalidArgError',
-      'InvalidArgNameError',
-      'MissingArgError',
-      'InvalidArgTypeError',
-      'AtLeastOneError',
-      'AtMostOneError',
-      'PrismaClientRequestError',
-      'PrismaClientOptions',
-      'PrismaClientKnownRequestError',
-      'PrismaClientUnknownRequestError',
-      'PrismaClientInitializationError',
-      'PrismaClientRustPanicError',
-      'PrismaVersion',
+      'Prisma',
       // JavaScript keywords
-      'await',
-      'async',
       'break',
       'case',
       'catch',
@@ -570,74 +419,14 @@ function validateDmmfAgainstDenylists(
       'yield',
     ],
     fields: ['AND', 'OR', 'NOT'],
-    dynamic: [] as string[],
-  }
-  if (previewFeatures.includes('tranactionApi')) {
-    denylists.models.push('transaction')
-    denylists.models.push('Transaction')
-  }
-
-  for (const { name } of prismaClientDmmf.datamodel.models) {
-    denylists.dynamic.push(
-      ...[
-        `${name}Select`,
-        `${name}Include`,
-        `${name}Default`,
-        `${name}Delegate`,
-        `${name}GetPayload`,
-        `${name}Filter`,
-
-        `${name}Args`,
-        `${name}ArgsFilter`,
-        `${name}ArgsRequired`,
-
-        `${name}WhereInput`,
-        `${name}WhereUniqueInput`,
-        `${name}CreateInput`,
-        `${name}UpdateInput`,
-        `${name}UpdateManyMutationInput`,
-        `${name}OrderByInput`,
-
-        `${name}CreateArgs`,
-
-        `${name}UpsertArgs`,
-
-        `${name}UpdateArgs`,
-        `${name}UpdateManyArgs`,
-
-        `${name}DeleteArgs`,
-        `${name}DeleteManyArgs`,
-        `Extract${name}SelectDeleteArgs`,
-        `Extract${name}IncludeDeleteArgs`,
-
-        `FindOne${name}Args`,
-
-        `FindMany${name}Args`,
-
-        /** Aggregate Types */
-
-        `Aggregate${name}`,
-        `${name}AvgAggregateOutputType`,
-        `${name}SumAggregateOutputType`,
-        `${name}MinAggregateOutputType`,
-        `${name}MaxAggregateOutputType`,
-        `${name}AvgAggregateInputType`,
-        `${name}SumAggregateInputType`,
-        `${name}MinAggregateInputType`,
-        `${name}MaxAggregateInputType`,
-        `Aggregate${name}Args`,
-        `Get${name}AggregateType`,
-        `Get${name}AggregateScalarType`,
-      ],
-    )
+    dynamic: [],
   }
 
   if (prismaClientDmmf.datamodel.enums) {
     for (const it of prismaClientDmmf.datamodel.enums) {
       if (
         denylists.models.includes(it.name) ||
-        denylists.fields.includes(it.name) ||
-        denylists.dynamic.includes(it.name)
+        denylists.fields.includes(it.name)
       ) {
         errorArray.push(Error(`"enum ${it.name}"`))
       }
@@ -648,8 +437,7 @@ function validateDmmfAgainstDenylists(
     for (const it of prismaClientDmmf.datamodel.models) {
       if (
         denylists.models.includes(it.name) ||
-        denylists.fields.includes(it.name) ||
-        denylists.dynamic.includes(it.name)
+        denylists.fields.includes(it.name)
       ) {
         errorArray.push(Error(`"model ${it.name}"`))
       }

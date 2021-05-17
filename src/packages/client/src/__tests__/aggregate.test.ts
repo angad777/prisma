@@ -1,7 +1,12 @@
-import { DMMFClass, makeDocument } from '../runtime'
 import { getDMMF } from '../generation/getDMMF'
+import { DMMFClass, makeDocument } from '../runtime'
 
 export const recommender = /* GraphQL */ `
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
 model Article {
   id      Int      @id
   url     String   @unique
@@ -10,14 +15,14 @@ model Article {
   content String
   date    DateTime
   likedBy User[]
-  link    Link
+  link    Link?
 }
 
 model Link {
-  id Int @id
+  id        Int      @id
   articleId Int
-  article Article @relation(fields: [articleId], references: [id])
-  postedAt DateTime
+  article   Article  @relation(fields: [articleId], references: [id])
+  postedAt  DateTime
 }
 
 model User {
@@ -25,14 +30,15 @@ model User {
   name          String
   email         String    @unique
   likedArticles Article[]
-  age Int?
-  personaId Int
-  persona Persona @relation(fields: [personaId])
+  age           Int?
+  personaId     Int
+  persona       Persona   @relation(fields: [personaId], references: [id])
 }
 
 model Persona {
-  id Int @id
+  id          Int     @id
   isDeveloper Boolean
+  User        User[]
 }
 `
 
@@ -42,7 +48,6 @@ describe('aggregate', () => {
     dmmf = new DMMFClass(
       await getDMMF({
         datamodel: recommender,
-        enableExperimental: ['aggregations'],
       }),
     )
   })
@@ -53,7 +58,11 @@ describe('aggregate', () => {
       select: {
         take: 10,
         select: {
-          count: true,
+          count: {
+            select: {
+              _all: true,
+            },
+          },
         },
       },
       rootTypeName: 'query',
@@ -61,11 +70,13 @@ describe('aggregate', () => {
     })
     document.validate(undefined, false, 'user', 'colorless')
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         aggregateUser(take: 10) {
-          count
+          count {
+            _all
+          }
         }
-      }"
+      }
     `)
   })
 
@@ -74,6 +85,16 @@ describe('aggregate', () => {
       dmmf,
       select: {
         take: 10,
+        cursor: {
+          email: 'a@a.de',
+        },
+        orderBy: {
+          age: 'asc',
+        },
+        skip: 12,
+        where: {
+          age: { gt: 500 },
+        },
         select: {
           count: true,
           avg: {
@@ -102,25 +123,7 @@ describe('aggregate', () => {
       rootField: 'aggregateUser',
     })
     document.validate(undefined, false, 'user', 'colorless')
-    expect(String(document)).toMatchInlineSnapshot(`
-      "query {
-        aggregateUser(take: 10) {
-          count
-          avg {
-            age
-          }
-          min {
-            age
-          }
-          max {
-            age
-          }
-          sum {
-            age
-          }
-        }
-      }"
-    `)
+    expect(String(document)).toMatchSnapshot()
   })
 
   test('unhappy path - incorrect arg', () => {

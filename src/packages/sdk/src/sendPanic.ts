@@ -14,7 +14,7 @@ import { RustPanic, ErrorArea } from './panic'
 import { getProxyAgent } from '@prisma/fetch-engine'
 import { IntrospectionEngine } from './IntrospectionEngine'
 
-const debug = Debug('sendPanic')
+const debug = Debug('prisma:sendPanic')
 // cleanup the temporary files even when an uncaught exception occurs
 tmp.setGracefulCleanup()
 
@@ -38,21 +38,25 @@ export async function sendPanic(
     }
 
     let sqlDump: string | undefined
-    if (error.area === ErrorArea.INTROSPECTION_CLI && error.introspectionUrl) {
+    let dbVersion: string | undefined
+    // For a SQLite datasource like `url = "file:dev.db"` only error.schema will be defined
+    const schemaOrUrl = error.schema || error.introspectionUrl
+    if (error.area === ErrorArea.INTROSPECTION_CLI && schemaOrUrl) {
       let engine: undefined | IntrospectionEngine
       try {
         engine = new IntrospectionEngine()
-        sqlDump = await engine.getDatabaseDescription(error.introspectionUrl)
+        sqlDump = await engine.getDatabaseDescription(schemaOrUrl)
+        dbVersion = await engine.getDatabaseVersion(schemaOrUrl)
         engine.stop()
       } catch (e) {
+        debug(e)
         if (engine && engine.isRunning) {
           engine.stop()
         }
-        debug(e)
       }
     }
 
-    const liftRequest = error.request
+    const migrateRequest = error.request
       ? JSON.stringify(
           mapScalarValues(error.request, (value) => {
             if (typeof value === 'string') {
@@ -63,7 +67,7 @@ export async function sendPanic(
         )
       : undefined
 
-    const signedUrl = await createErrorReport({
+    const params = {
       area: error.area,
       kind: ErrorKind.RUST_PANIC,
       cliVersion,
@@ -73,11 +77,14 @@ export async function sendPanic(
       rustStackTrace: error.rustStack,
       operatingSystem: `${os.arch()} ${os.platform()} ${os.release()}`,
       platform: await getPlatform(),
-      liftRequest,
+      liftRequest: migrateRequest,
       schemaFile: maskedSchema,
       fingerprint: await checkpoint.getSignature(),
-      sqlDump,
-    })
+      sqlDump: sqlDump,
+      dbVersion: dbVersion,
+    }
+
+    const signedUrl = await createErrorReport(params)
 
     if (error.schemaPath) {
       const zip = await makeErrorZip(error)
@@ -92,9 +99,11 @@ export async function sendPanic(
 }
 
 function getCommand(): string {
+  // don't send url
   if (process.argv[2] === 'introspect') {
-    // don't send url
     return 'introspect'
+  } else if (process.argv[2] === 'db' && process.argv[3] === 'pull') {
+    return 'db pull'
   }
   return process.argv.slice(2).join(' ')
 }
@@ -102,7 +111,7 @@ function getCommand(): string {
 async function uploadZip(zip: Buffer, url: string): Promise<any> {
   return await fetch(url, {
     method: 'PUT',
-    agent: getProxyAgent(url),
+    agent: getProxyAgent(url) as any,
     headers: {
       'Content-Length': String(zip.byteLength),
     },
@@ -173,6 +182,7 @@ export interface CreateErrorReportInput {
   schemaFile?: string
   fingerprint?: string
   sqlDump?: string
+  dbVersion?: string
 }
 
 export enum ErrorKind {
@@ -212,7 +222,7 @@ async function request(query: string, variables: any): Promise<any> {
   })
   return await fetch(url, {
     method: 'POST',
-    agent: getProxyAgent(url),
+    agent: getProxyAgent(url) as any,
     body,
     headers: {
       Accept: 'application/json',

@@ -6,7 +6,6 @@ export {
   unpack,
   PrismaClientValidationError,
 } from './query'
-export { default as debugLib } from '@prisma/debug'
 
 export {
   Engine,
@@ -15,5 +14,18 @@ export {
   PrismaClientInitializationError,
   PrismaClientRustPanicError,
 } from '@prisma/engine-core'
-export { getPrismaClient } from './getPrismaClient'
-export * as sqltag from 'sql-template-tag'
+export { getPrismaClient, PrismaClientOptions } from './getPrismaClient'
+
+export {
+  RawValue,
+  Sql,
+  Value,
+  empty,
+  join,
+  raw,
+  sqltag,
+} from 'sql-template-tag'
+
+export { warnEnvConflicts } from './warnEnvConflicts'
+
+export { default as Decimal } from 'decimal.js'

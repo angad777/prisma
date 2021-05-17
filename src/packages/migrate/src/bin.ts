@@ -1,5 +1,7 @@
 #!/usr/bin/env ts-node
 
+process.env.NODE_NO_WARNINGS = '1'
+
 process.on('uncaughtException', (e) => {
   console.log(e)
 })
@@ -7,38 +9,55 @@ process.on('unhandledRejection', (e, promise) => {
   console.log(String(e), String(promise))
 })
 
-process.env.NODE_NO_WARNINGS = '1'
+import { HelpError, isError, tryLoadEnvs, arg, getEnvPaths } from '@prisma/sdk'
+
+const commandArray = process.argv.slice(2)
+
+// Parse CLI arguments
+const args = arg(
+  commandArray,
+  {
+    '--schema': String,
+    '--telemetry-information': String,
+  },
+  false,
+  true,
+)
+
+//
+// Read .env file only if next to schema.prisma
+//
+// if the CLI is called without any command like `dev` we can ignore .env loading
+if (process.argv.length > 2) {
+  try {
+    const envPaths = getEnvPaths(args['--schema'])
+    const envData = tryLoadEnvs(envPaths, { conflictCheck: 'error' })
+    envData && envData.message && console.log(envData.message)
+  } catch (e) {
+    console.log(e)
+  }
+}
 
 /**
  * Dependencies
  */
 import chalk from 'chalk'
-import debugLib from 'debug'
-import path from 'path'
+import Debug from '@prisma/debug'
 
-import { HelpError, isError } from '@prisma/sdk'
 import { MigrateCommand } from './commands/MigrateCommand'
-import { MigrateDown } from './commands/MigrateDown'
-import { MigrateSave } from './commands/MigrateSave'
-import { MigrateTmpPrepare } from './commands/MigrateTmpPrepare'
-import { MigrateUp } from './commands/MigrateUp'
-import { StudioCommand } from './commands/StudioCommand'
+import { MigrateDev } from './commands/MigrateDev'
+import { MigrateReset } from './commands/MigrateReset'
+import { MigrateDeploy } from './commands/MigrateDeploy'
+import { MigrateResolve } from './commands/MigrateResolve'
+import { MigrateStatus } from './commands/MigrateStatus'
+import { DbPush } from './commands/DbPush'
+import { DbPull } from './commands/DbPull'
+import { DbDrop } from './commands/DbDrop'
+import { DbSeed } from './commands/DbSeed'
 import { handlePanic } from './utils/handlePanic'
-import { ProviderAliases } from '@prisma/sdk'
-
-const debug = debugLib('migrate')
+import { enginesVersion } from '@prisma/engines-version'
 
 const packageJson = eval(`require('../package.json')`) // tslint:disable-line
-
-const providerAliases: ProviderAliases = {
-  'prisma-client-js': {
-    generatorPath: require.resolve('@prisma/client/generator-build'),
-    outputPath: path.dirname(require.resolve('@prisma/client/package.json')),
-  },
-}
-
-// const access = fs.createWriteStream('out.log')
-// process.stdout.write = process.stderr.write = access.write.bind(access)
 
 /**
  * Main function
@@ -46,14 +65,19 @@ const providerAliases: ProviderAliases = {
 async function main(): Promise<number> {
   // create a new CLI with our subcommands
   const cli = MigrateCommand.new({
-    save: MigrateSave.new(),
-    up: MigrateUp.new(),
-    down: MigrateDown.new(),
-    ['tmp-prepare']: MigrateTmpPrepare.new(),
-    studio: StudioCommand.new(providerAliases),
+    dev: MigrateDev.new(),
+    reset: MigrateReset.new(),
+    deploy: MigrateDeploy.new(),
+    status: MigrateStatus.new(),
+    resolve: MigrateResolve.new(),
+    // for convenient debugging
+    pull: DbPull.new(),
+    push: DbPush.new(),
+    drop: DbDrop.new(),
+    seed: DbSeed.new(),
   })
   // parse the arguments
-  const result = await cli.parse(process.argv.slice(2))
+  const result = await cli.parse(commandArray)
   if (result instanceof HelpError) {
     console.error(result)
     return 1
@@ -80,18 +104,24 @@ main()
   })
   .catch((error) => {
     if (error.rustStack) {
-      handlePanic(error, packageJson.version, packageJson.prisma.version).catch(
-        (e) => {
-          if (debugLib.enabled('migrate')) {
+      handlePanic(
+        error,
+        packageJson.version,
+        enginesVersion,
+        commandArray.join(' '),
+      )
+        .catch((e) => {
+          if (Debug.enabled('migrate')) {
             console.error(chalk.redBright.bold('Error: ') + e.stack)
           } else {
             console.error(chalk.redBright.bold('Error: ') + e.message)
           }
+        })
+        .finally(() => {
           process.exit(1)
-        },
-      )
+        })
     } else {
-      if (debugLib.enabled('migrate')) {
+      if (Debug.enabled('migrate')) {
         console.error(chalk.redBright.bold('Error: ') + error.stack)
       } else {
         console.error(chalk.redBright.bold('Error: ') + error.message)

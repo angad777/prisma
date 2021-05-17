@@ -28,12 +28,16 @@ describe('minimal where transformation', () => {
     })
 
     expect(transformedDocument).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
           OR: [
             {
-              posts_some: {
-                id_in: [\\"test\\"]
+              posts: {
+                some: {
+                  id: {
+                    in: ["test"]
+                  }
+                }
               }
             }
           ]
@@ -42,8 +46,17 @@ describe('minimal where transformation', () => {
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }"
+      }
     `)
   })
 
@@ -61,11 +74,13 @@ describe('minimal where transformation', () => {
     })
 
     expect(transformedDocument).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
           OR: [
             {
-              name_starts_with: \\"x\\"
+              name: {
+                startsWith: "x"
+              }
             }
           ]
         }) {
@@ -73,8 +88,17 @@ describe('minimal where transformation', () => {
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }"
+      }
     `)
   })
 
@@ -92,11 +116,13 @@ describe('minimal where transformation', () => {
     })
 
     expect(transformedDocument).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser(where: {
           OR: [
             {
-              name_ends_with: \\"x\\"
+              name: {
+                endsWith: "x"
+              }
             }
           ]
         }) {
@@ -104,8 +130,236 @@ describe('minimal where transformation', () => {
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }"
+      }
+    `)
+  })
+
+  test('implicit many-to-many relation: contains', () => {
+    const transformedDocument = getTransformedDocument({
+      where: {
+        posts: {
+          some: {
+            title: {
+              contains: 'mytitle',
+            },
+          },
+        },
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser(where: {
+          posts: {
+            some: {
+              title: {
+                contains: "mytitle"
+              }
+            }
+          }
+        }) {
+          id
+          email
+          name
+          json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
+        }
+      }
+    `)
+  })
+
+  test('implicit many-to-many relation: select date equals (implicit)', () => {
+    const transformedDocument = getTransformedDocument({
+      select: {
+        posts: {
+          where: {
+            OR: [
+              {
+                createdAt: '2020-08-19T10:02:43.353Z',
+              },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser {
+          posts(where: {
+            OR: [
+              {
+                createdAt: "2020-08-19T10:02:43.353Z"
+              }
+            ]
+          }) {
+            id
+            createdAt
+            updatedAt
+            published
+            title
+            content
+            authorId
+            optionnal
+          }
+        }
+      }
+    `)
+  })
+
+  test('implicit many-to-many relation: select date equals (explicit)', () => {
+    const transformedDocument = getTransformedDocument({
+      select: {
+        posts: {
+          where: {
+            OR: [
+              {
+                createdAt: { equals: '2020-08-19T10:02:43.353Z' },
+              },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser {
+          posts(where: {
+            OR: [
+              {
+                createdAt: {
+                  equals: "2020-08-19T10:02:43.353Z"
+                }
+              }
+            ]
+          }) {
+            id
+            createdAt
+            updatedAt
+            published
+            title
+            content
+            authorId
+            optionnal
+          }
+        }
+      }
+    `)
+  })
+
+  test('implicit many-to-many relation: where null', () => {
+    const transformedDocument = getTransformedDocument({
+      select: {
+        posts: {
+          where: {
+            content: null,
+          },
+        },
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser {
+          posts(where: {
+            content: null
+          }) {
+            id
+            createdAt
+            updatedAt
+            published
+            title
+            content
+            authorId
+            optionnal
+          }
+        }
+      }
+    `)
+  })
+
+  test('where null', () => {
+    const transformedDocument = getTransformedDocument({
+      where: {
+        name: null,
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser(where: {
+          name: null
+        }) {
+          id
+          email
+          name
+          json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
+        }
+      }
+    `)
+  })
+
+  test('one-to-one realtion where null', () => {
+    const transformedDocument = getTransformedDocument({
+      where: {
+        profile: {
+          bio: { not: null },
+        },
+      },
+    })
+
+    expect(transformedDocument).toMatchInlineSnapshot(`
+      query {
+        findManyUser(where: {
+          profile: {
+            bio: {
+              not: null
+            }
+          }
+        }) {
+          id
+          email
+          name
+          json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
+        }
+      }
     `)
   })
 })

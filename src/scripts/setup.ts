@@ -1,16 +1,14 @@
 import execa from 'execa'
 import chalk from 'chalk'
-import Debug from 'debug'
 import fs from 'fs'
 import path from 'path'
+import pRetry from 'p-retry'
 import pMap from 'p-map'
 import {
   getPackages,
   getPublishOrder,
   getPackageDependencies,
 } from './ci/publish'
-Debug.enable('setup')
-const debug = Debug('setup')
 import fetch from 'node-fetch'
 
 function getCommitEnvVar(name: string): string {
@@ -29,8 +27,10 @@ has to point to the dev version you want to promote, for example 2.1.0-dev.123`)
       `You provided RELEASE_PROMOTE_DEV without BUILDKITE_TAG, which doesn't make sense.`,
     )
   }
-  await run('.', `git config --global user.email "prismabots@gmail.com"`)
-  await run('.', `git config --global user.name "prisma-bot"`)
+  if (process.env.CI && !process.env.SKIP_GIT) {
+    await run('.', `git config --global user.email "prismabots@gmail.com"`)
+    await run('.', `git config --global user.name "prisma-bot"`)
+  }
   if (process.env.RELEASE_PROMOTE_DEV) {
     const versions = await getVersionHashes(process.env.RELEASE_PROMOTE_DEV)
     // TODO: disable the dry run here
@@ -58,15 +58,15 @@ has to point to the dev version you want to promote, for example 2.1.0-dev.123`)
 
   console.log(publishOrder)
   if (!buildOnly) {
-    debug(`Installing dependencies`)
+    console.debug(`Installing dependencies`)
 
     await run(
       '.',
-      `pnpm i --no-prefer-frozen-lockfile -r --ignore-scripts --reporter=silent`,
+      `pnpm i --no-prefer-frozen-lockfile -r --reporter=silent`,
     ).catch((e) => {})
   }
 
-  debug(`Building packages`)
+  console.debug(`Building packages`)
 
   for (const batch of publishOrder) {
     await pMap(
@@ -79,6 +79,11 @@ has to point to the dev version you want to promote, for example 2.1.0-dev.123`)
         // we want to build all in build-only to see all errors at once
         if (buildOnly) {
           runPromise.catch(console.error)
+
+          // for sqlite3 native bindings, they need a rebuild after an update
+          if (['@prisma/migrate', '@prisma/tests'].includes(pkgName)) {
+            run(pkgDir, 'pnpm rebuild')
+          }
         }
 
         await runPromise
@@ -100,23 +105,28 @@ has to point to the dev version you want to promote, for example 2.1.0-dev.123`)
         const pkgDir = path.dirname(pkg.path)
         await run(pkgDir, 'pnpm run postinstall')
       }
-      if (pkg.packageJson.scripts.download) {
-        const pkgDir = path.dirname(pkg.path)
-        await run(pkgDir, 'pnpm run download')
-      }
-      if (pkg.packageJson.scripts['ncc:download']) {
-        const pkgDir = path.dirname(pkg.path)
-        await run(pkgDir, 'pnpm run ncc:download')
-      }
     }
   }
 
   // final install on top level
-  await run('.', 'pnpm i --no-prefer-frozen-lockfile -r --reporter=silent')
+  await pRetry(
+    async () => {
+      await run('.', 'pnpm i --no-prefer-frozen-lockfile -r')
+    },
+    {
+      retries: 6,
+      onFailedAttempt: (e) => {
+        console.error(e)
+      },
+    },
+  )
 }
 
 if (!module.parent) {
-  main().catch(console.error)
+  main().catch((e) => {
+    console.error(e)
+    process.exit(1)
+  })
 }
 
 export async function cloneOrPull(repo: string, dryRun = false) {
@@ -139,17 +149,17 @@ export async function run(
   cwd: string,
   cmd: string,
   dry: boolean = false,
-): Promise<void> {
+): Promise<execa.ExecaReturnValue<string>> {
   const args = [chalk.underline('./' + cwd).padEnd(20), chalk.bold(cmd)]
   if (dry) {
     args.push(chalk.dim('(dry)'))
   }
-  debug(args.join(' '))
+  console.debug(args.join(' '))
   if (dry) {
     return
   }
   try {
-    await execa.command(cmd, {
+    return await execa.command(cmd, {
       cwd,
       stdio: 'inherit',
     })
@@ -218,15 +228,16 @@ async function branchExists(dir: string, branch: string): Promise<boolean> {
 
 async function getVersionHashes(
   npmVersion: string,
-): Promise<{ engines: string; prisma: string }> {
-  return fetch(`https://unpkg.com/@prisma/cli@${npmVersion}/package.json`, {
+): Promise<{ prisma: string }> {
+  return fetch(`https://unpkg.com/prisma@${npmVersion}/package.json`, {
     headers: {
       accept: 'application/json',
     },
   })
     .then((res) => res.json())
-    .then((pkg) => ({
-      engines: pkg.prisma.version,
-      prisma: pkg.prisma.prismaCommit,
-    }))
+    .then((pkg) => {
+      return {
+        prisma: pkg.prisma.prismaCommit,
+      }
+    })
 }

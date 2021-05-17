@@ -2,7 +2,7 @@
   "compilerOptions": {
     "lib": ["esnext", "esnext.asynciterable"],
     "module": "commonjs",
-    "target": "es2016",
+    "target": "es2018",
     "strict": true,
     "esModuleInterop": true,
     "sourceMap": true,
@@ -12,5 +12,5 @@
     "declaration": true,
     "incremental": true
   },
-  "exclude": ["dist", "build", "download-build", "src/sandbox"]
+  "exclude": ["dist", "build", "src/__tests__", "src/sandbox"]
 }

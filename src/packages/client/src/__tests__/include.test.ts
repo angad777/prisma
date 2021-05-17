@@ -50,18 +50,19 @@ describe('include validation', () => {
       document.validate(ast, false)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.findManyPost()\` invocation:
 
         {
           include: {
-        ?   author?: true
+        ?   author?: true,
+        ?   categories?: true
           }
         }
 
 
         The \`include\` statement for type Post must not be empty. Available options are listed in green.
-        "
+
       `)
     }
   })
@@ -97,7 +98,7 @@ describe('include validation', () => {
       document.validate(ast, false)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.findManyNoRelations()\` invocation:
 
         {
@@ -106,7 +107,7 @@ describe('include validation', () => {
 
 
         NoRelations does not have any relation and therefore can't have an \`include\` statement.
-        "
+
       `)
     }
   })
@@ -130,7 +131,7 @@ describe('include validation', () => {
       document.validate(ast, false)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.asd()\` invocation:
 
         {
@@ -143,7 +144,7 @@ describe('include validation', () => {
 
         Unknown field \`asd\` for include statement on model NoRelations.
         This model has no relations, so you can't use include with it.
-        "
+
       `)
     }
   })
@@ -185,12 +186,21 @@ describe('include validation', () => {
     })
 
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
           posts {
             id
             createdAt
@@ -199,9 +209,10 @@ describe('include validation', () => {
             title
             content
             authorId
+            optionnal
           }
         }
-      }"
+      }
     `)
     expect(() => document.validate(ast)).not.toThrow()
   })
@@ -243,21 +254,22 @@ describe('include validation', () => {
       document.validate(ast, false)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.id()\` invocation:
 
         {
           include: {
             id: true,
             ~~
-        ?   author?: true
+        ?   author?: true,
+        ?   categories?: true
           }
         }
 
 
         Invalid scalar field \`id\` for include statement on model Post. Available options are listed in green.
         Note, that include statements only accept relation fields.
-        "
+
       `)
     }
   })
@@ -281,20 +293,21 @@ describe('include validation', () => {
       document.validate(ast, false)
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-        "
+
         Invalid \`prisma.mauthor()\` invocation:
 
         {
           include: {
             mauthor: true,
             ~~~~~~~
-        ?   author?: true
+        ?   author?: true,
+        ?   categories?: true
           }
         }
 
 
         Unknown field \`mauthor\` for include statement on model Post. Available options are listed in green. Did you mean \`author\`?
-        "
+
       `)
     }
   })
@@ -319,17 +332,26 @@ describe('include validation', () => {
     })
 
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
           posts(take: 20) {
             id
           }
         }
-      }"
+      }
     `)
     expect(() => document.validate(ast)).not.toThrow()
   })
@@ -357,12 +379,21 @@ describe('include validation', () => {
     })
 
     expect(String(document)).toMatchInlineSnapshot(`
-      "query {
+      query {
         findManyUser {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
           posts(take: 20) {
             id
             author {
@@ -370,6 +401,15 @@ describe('include validation', () => {
               email
               name
               json
+              countFloat
+              countInt1
+              countInt2
+              countInt3
+              countInt4
+              countInt5
+              countInt6
+              lastLoginAt
+              coinflips
               posts {
                 id
                 createdAt
@@ -378,11 +418,12 @@ describe('include validation', () => {
                 title
                 content
                 authorId
+                optionnal
               }
             }
           }
         }
-      }"
+      }
     `)
     expect(() => document.validate(ast)).not.toThrow()
   })

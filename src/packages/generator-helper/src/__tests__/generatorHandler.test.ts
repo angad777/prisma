@@ -10,11 +10,24 @@ const stubOptions: GeneratorOptions = {
       enums: [],
       models: [],
     },
-    mappings: [],
+    mappings: {
+      modelOperations: [],
+      otherOperations: {
+        read: [],
+        write: [],
+      },
+    },
     schema: {
-      enums: [],
-      inputTypes: [],
-      outputTypes: [],
+      enumTypes: {
+        prisma: [],
+      },
+      inputObjectTypes: {
+        prisma: [],
+      },
+      outputObjectTypes: {
+        model: [],
+        prisma: [],
+      },
     },
   },
   generator: {
@@ -22,7 +35,10 @@ const stubOptions: GeneratorOptions = {
     name: 'some-generator',
     output: null,
     binaryTargets: [],
-    provider: '',
+    provider: {
+      value: '',
+      fromEnvVar: null,
+    },
     previewFeatures: [],
   },
   otherGenerators: [],
@@ -31,13 +47,6 @@ const stubOptions: GeneratorOptions = {
 }
 
 describe('generatorHandler', () => {
-  // test('not executable', async () => {
-  //   expect(() => {
-  //     const generator = new GeneratorProcess(
-  //       path.join(__dirname, 'not-executable'),
-  //     )
-  //   }).toThrow('is not executable')
-  // })
   test('exiting', async () => {
     const generator = new GeneratorProcess(
       path.join(__dirname, 'exiting-executable'),
@@ -54,7 +63,7 @@ describe('generatorHandler', () => {
     const generator = new GeneratorProcess(
       path.join(__dirname, 'invalid-executable'),
     )
-    await expect(generator.init()).rejects.toThrow(
+    await expect(() => generator.init()).rejects.toThrow(
       `Cannot find module 'ms-node/register'`,
     )
   })
@@ -63,7 +72,7 @@ describe('generatorHandler', () => {
       path.join(__dirname, 'minimal-executable'),
     )
     await generator.init()
-    const manifest = await generator.getManifest()
+    const manifest = await generator.getManifest(stubOptions.generator)
     expect(manifest).toMatchInlineSnapshot(`
       Object {
         "defaultOutput": "default-output",
@@ -91,7 +100,7 @@ describe('generatorHandler', () => {
       path.join(__dirname, 'failing-executable'),
     )
     await generator.init()
-    await expect(generator.getManifest()).rejects.toThrow()
+    await expect(generator.getManifest(stubOptions.generator)).rejects.toThrow()
     await expect(generator.generate(stubOptions)).rejects.toThrow()
     generator.stop()
   })
@@ -99,6 +108,6 @@ describe('generatorHandler', () => {
     const generator = new GeneratorProcess(
       path.join(__dirname, 'random path that doesnt exist'),
     )
-    expect(() => generator.init()).rejects.toThrow()
+    await expect(() => generator.init()).rejects.toThrow()
   })
 })

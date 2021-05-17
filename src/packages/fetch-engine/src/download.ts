@@ -1,40 +1,48 @@
-import fs from 'fs'
-import { promisify } from 'util'
-import chalk from 'chalk'
-
-// Packages
-import path from 'path'
 import Debug from '@prisma/debug'
-import makeDir from 'make-dir'
+import {
+  getNapiName,
+  getos,
+  getPlatform,
+  Platform,
+  platforms,
+} from '@prisma/get-platform'
+import chalk from 'chalk'
 import execa from 'execa'
+import fs from 'fs'
+import makeDir from 'make-dir'
 import pFilter from 'p-filter'
-import hasha from 'hasha'
+import path from 'path'
 import tempDir from 'temp-dir'
-
-// Utils
-import { getBar } from './log'
+import { promisify } from 'util'
 import plusxSync from './chmod'
-import { copy } from './copy'
-import { getPlatform, Platform, platforms, getos } from '@prisma/get-platform'
-import { downloadZip } from './downloadZip'
-import { getCacheDir, getDownloadUrl } from './util'
 import { cleanupCache } from './cleanupCache'
+import { copy } from './copy'
+import { downloadZip } from './downloadZip'
 import { flatMap } from './flatMap'
+import { getHash } from './getHash'
 import { getLatestTag } from './getLatestTag'
+import { getBar } from './log'
+import { getCacheDir, getDownloadUrl } from './util'
 
-const debug = Debug('download')
+const debug = Debug('prisma:download')
 const writeFile = promisify(fs.writeFile)
 const exists = promisify(fs.exists)
 const readFile = promisify(fs.readFile)
 
 const channel = 'master'
-export interface BinaryDownloadConfiguration {
-  'query-engine'?: string
-  'migration-engine'?: string
-  'introspection-engine'?: string
-  'prisma-fmt'?: string
+export enum EngineTypes {
+  queryEngine = 'query-engine',
+  libqueryEngineNapi = 'libquery-engine-napi',
+  migrationEngine = 'migration-engine',
+  introspectionEngine = 'introspection-engine',
+  prismaFmt = 'prisma-fmt',
 }
-
+export type BinaryDownloadConfiguration = {
+  [binary in EngineTypes]?: string
+}
+export type BinaryPaths = {
+  [binary in EngineTypes]?: { [binaryTarget in Platform]: string } // key: target, value: path
+}
 export interface DownloadOptions {
   binaries: BinaryDownloadConfiguration
   binaryTargets?: Platform[]
@@ -47,27 +55,21 @@ export interface DownloadOptions {
   printVersion?: boolean
 }
 
-export type BinaryPaths = {
-  'migration-engine'?: { [binaryTarget: string]: string } // key: target, value: path
-  'query-engine'?: { [binaryTarget: string]: string }
-  'introspection-engine'?: { [binaryTarget: string]: string }
-  'prisma-fmt'?: { [binaryTarget: string]: string }
-}
-
-const binaryToEnvVar = {
-  'migration-engine': 'PRISMA_MIGRATION_ENGINE_BINARY',
-  'query-engine': 'PRISMA_QUERY_ENGINE_BINARY',
-  'introspection-engine': 'PRISMA_INTROSPECTION_ENGINE_BINARY',
-  'prisma-fmt': 'PRISMA_FMT_BINARY',
+const BINARY_TO_ENV_VAR = {
+  [EngineTypes.migrationEngine]: 'PRISMA_MIGRATION_ENGINE_BINARY',
+  [EngineTypes.queryEngine]: 'PRISMA_QUERY_ENGINE_BINARY',
+  [EngineTypes.libqueryEngineNapi]: 'PRISMA_QUERY_ENGINE_LIBRARY',
+  [EngineTypes.introspectionEngine]: 'PRISMA_INTROSPECTION_ENGINE_BINARY',
+  [EngineTypes.prismaFmt]: 'PRISMA_FMT_BINARY',
 }
 
 type BinaryDownloadJob = {
   binaryName: string
   targetFolder: string
-  binaryTarget: string
+  binaryTarget: Platform
   fileName: string
   targetFilePath: string
-  envVarPath: string
+  envVarPath: string | null
 }
 
 export async function download(options: DownloadOptions): Promise<BinaryPaths> {
@@ -75,17 +77,19 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
   const platform = await getPlatform()
   const os = await getos()
 
-  if (['arm', 'nixos'].includes(os.distro)) {
+  if (os.distro && ['nixos'].includes(os.distro)) {
     console.error(
       `${chalk.yellow('Warning')} Precompiled binaries are not available for ${
         os.distro
       }.`,
     )
-  } else if (['freebsd', 'openbsd', 'netbsd'].includes(platform)) {
+  } else if (
+    ['freebsd11', 'freebsd12', 'openbsd', 'netbsd'].includes(platform)
+  ) {
     console.error(
       `${chalk.yellow(
         'Warning',
-      )} Precompiled binaries are not available for ${platform}.`,
+      )} Precompiled binaries are not available for ${platform}. Read more about building your own binaries at https://pris.ly/d/build-binaries`,
     )
   }
 
@@ -94,51 +98,46 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
     return {}
   }
 
-  if (options.binaryTargets && Array.isArray(options.binaryTargets)) {
-    const unknownTargets = options.binaryTargets.filter(
-      (t) => !platforms.includes(t),
-    )
-    if (unknownTargets.length > 0) {
-      throw new Error(`Unknown binaryTargets ${unknownTargets.join(', ')}`)
-    }
-  }
-
   // merge options
-  options = {
-    binaryTargets: [platform],
-    version: 'latest',
+  const opts = {
     ...options,
+    binaryTargets: options.binaryTargets ?? [platform],
+    version: options.version ?? 'latest',
     binaries: mapKeys(options.binaries, (key) =>
       engineTypeToBinaryType(key, platform),
     ), // just necessary to support both camelCase and hyphen-case
   }
 
-  const binaryJobs: Array<BinaryDownloadJob> = flatMap(
-    Object.entries(options.binaries),
-    ([binaryName, targetFolder]) =>
-      options.binaryTargets.map((binaryTarget) => {
+  const binaryJobs = flatMap(
+    Object.entries(opts.binaries),
+    ([binaryName, targetFolder]: [string, string]) =>
+      opts.binaryTargets.map((binaryTarget) => {
         const fileName = getBinaryName(binaryName, binaryTarget)
+        const targetFilePath =
+          binaryName === EngineTypes.libqueryEngineNapi
+            ? path.join(targetFolder, getNapiName(binaryTarget, 'fs'))
+            : path.join(targetFolder, fileName)
         return {
           binaryName,
           targetFolder,
           binaryTarget,
           fileName,
-          targetFilePath: path.join(targetFolder, fileName),
+          targetFilePath,
           envVarPath: getBinaryEnvVarPath(binaryName),
         }
       }),
   )
 
   if (process.env.BINARY_DOWNLOAD_VERSION) {
-    options.version = process.env.BINARY_DOWNLOAD_VERSION
+    opts.version = process.env.BINARY_DOWNLOAD_VERSION
   }
 
-  if (options.version === 'latest') {
-    options.version = await getLatestTag()
+  if (opts.version === 'latest') {
+    opts.version = await getLatestTag()
   }
 
-  if (options.printVersion) {
-    console.log(`version: ${options.version}`)
+  if (opts.printVersion) {
+    console.log(`version: ${opts.version}`)
   }
 
   // filter out files, which don't yet exist or have to be created
@@ -146,10 +145,20 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
     const needsToBeDownloaded = await binaryNeedsToBeDownloaded(
       job,
       platform,
-      options.version,
-      options.failSilent,
+      opts.version,
+      opts.failSilent,
     )
-    return !job.envVarPath && (options.ignoreCache || needsToBeDownloaded)
+    const isSupported = platforms.includes(job.binaryTarget as Platform)
+    const shouldDownload =
+      isSupported &&
+      !job.envVarPath &&
+      (opts.ignoreCache || needsToBeDownloaded)
+    if (needsToBeDownloaded && !isSupported) {
+      throw new Error(
+        `Unknown binaryTarget ${job.binaryTarget} and no custom binaries were provided`,
+      )
+    }
+    return shouldDownload
   })
 
   if (binariesToDownload.length > 0) {
@@ -160,8 +169,8 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
       | undefined
       | ((sourcePath: string) => (progress: number) => void)
 
-    if (options.showProgress) {
-      const collectiveBar = getCollectiveBar(options)
+    if (opts.showProgress) {
+      const collectiveBar = getCollectiveBar(opts)
       finishBar = collectiveBar.finishBar
       setProgress = collectiveBar.setProgress
     }
@@ -171,8 +180,8 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
       binariesToDownload.map((job) =>
         downloadBinary({
           ...job,
-          version: options.version,
-          failSilent: options.failSilent,
+          version: opts.version,
+          failSilent: opts.failSilent,
           progressCb: setProgress ? setProgress(job.targetFilePath) : undefined,
         }),
       ),
@@ -209,7 +218,7 @@ function getCollectiveBar(
 } {
   const bar = getBar(
     `Downloading Prisma engines for ${options.binaryTargets
-      .map((p) => chalk.bold(p))
+      ?.map((p) => chalk.bold(p))
       .join(' and ')}`,
   )
 
@@ -217,7 +226,7 @@ function getCollectiveBar(
   // Object.values is faster than Object.keys
   const numDownloads =
     Object.values(options.binaries).length *
-    Object.values(options.binaryTargets).length
+    Object.values(options?.binaryTargets ?? []).length
   const setProgress = (sourcePath: string) => (progress): void => {
     progressMap[sourcePath] = progress
     const progressValues = Object.values(progressMap)
@@ -259,11 +268,12 @@ async function binaryNeedsToBeDownloaded(
   job: BinaryDownloadJob,
   nativePlatform: string,
   version: string,
-  failSilent: boolean,
+  failSilent?: boolean,
 ): Promise<boolean> {
-  // 1. Check if file exists
-  const targetExists = await exists(job.targetFilePath)
+  const binaryPath = job.envVarPath ?? job.targetFilePath
 
+  // 1. Check if file exists
+  const targetExists = await exists(binaryPath)
   // 2. If exists, check, if cached file exists and is up to date and has same hash as file.
   // If not, copy cached file over
   const cachedFile = await getCachedBinaryPath({
@@ -276,21 +286,18 @@ async function binaryNeedsToBeDownloaded(
     const sha256FilePath = cachedFile + '.sha256'
     if (await exists(sha256FilePath)) {
       const sha256File = await readFile(sha256FilePath, 'utf-8')
-      // TODO: Use `fromFile` as soon as https://github.com/nodejs/node/issues/33263 is fixed
-      const sha256Cache = await hasha.fromFileSync(cachedFile, {
-        algorithm: 'sha256',
-      })
+      const sha256Cache = await getHash(cachedFile)
       if (sha256File === sha256Cache) {
         if (!targetExists) {
+          debug(`copying ${cachedFile} to ${job.targetFilePath}`)
           await copy(cachedFile, job.targetFilePath)
         }
-        // TODO: Use `fromFile` as soon as https://github.com/nodejs/node/issues/33263 is fixed
-        const targetSha256 = await hasha.fromFileSync(job.targetFilePath, {
-          algorithm: 'sha256',
-        })
+        const targetSha256 = await getHash(job.targetFilePath)
         if (sha256File !== targetSha256) {
+          debug(
+            `overwriting ${job.targetFilePath} with ${cachedFile} as hashes do not match`,
+          )
           await copy(cachedFile, job.targetFilePath)
-        } else {
         }
         return false
       } else {
@@ -303,12 +310,16 @@ async function binaryNeedsToBeDownloaded(
 
   // If there is no cache and the file doesn't exist, we for sure need to download it
   if (!targetExists) {
+    debug(`file ${binaryPath} does not exist and must be downloaded`)
     return true
   }
 
   // 3. If same platform, always check --version
-  if (job.binaryTarget === nativePlatform) {
-    const works = await checkVersionCommand(job.targetFilePath)
+  if (
+    job.binaryTarget === nativePlatform &&
+    job.binaryName !== EngineTypes.libqueryEngineNapi
+  ) {
+    const works = await checkVersionCommand(binaryPath)
     return !works
   }
 
@@ -333,14 +344,17 @@ export async function checkVersionCommand(
   }
 }
 
-export function getBinaryName(binaryName: string, platform: string): string {
+export function getBinaryName(binaryName: string, platform: Platform): string {
+  if (binaryName === EngineTypes.libqueryEngineNapi) {
+    return `${getNapiName(platform, 'url')}`
+  }
   const extension = platform === 'windows' ? '.exe' : ''
   return `${binaryName}-${platform}${extension}`
 }
 
 type GetCachedBinaryOptions = BinaryDownloadJob & {
   version: string
-  failSilent: boolean
+  failSilent?: boolean
 }
 
 async function getCachedBinaryPath({
@@ -373,9 +387,12 @@ async function getCachedBinaryPath({
 }
 
 export function getBinaryEnvVarPath(binaryName: string): string | null {
-  const envVar = binaryToEnvVar[binaryName]
+  const envVar = BINARY_TO_ENV_VAR[binaryName]
   if (envVar && process.env[envVar]) {
-    const envVarPath = path.resolve(process.cwd(), process.env[envVar])
+    const envVarPath = path.resolve(
+      process.cwd(),
+      process.env[envVar] as string,
+    )
     if (!fs.existsSync(envVarPath)) {
       throw new Error(
         `Env var ${chalk.bold(
@@ -401,6 +418,7 @@ type DownloadBinaryOptions = BinaryDownloadJob & {
   progressCb?: (progress: number) => void
   failSilent?: boolean
 }
+
 async function downloadBinary(options: DownloadBinaryOptions): Promise<void> {
   const {
     version,
@@ -426,7 +444,7 @@ async function downloadBinary(options: DownloadBinaryOptions): Promise<void> {
       return
     } else {
       throw new Error(
-        `Can't write to ${targetDir} please make sure you install "@prisma/cli" with the right permissions.`,
+        `Can't write to ${targetDir} please make sure you install "prisma" with the right permissions.`,
       )
     }
   }
@@ -487,22 +505,9 @@ function engineTypeToBinaryType(
   engineType: string,
   binaryTarget: string,
 ): string {
-  if (engineType === 'introspectionEngine') {
-    return 'introspection-engine'
+  if (EngineTypes[engineType]) {
+    return EngineTypes[engineType]
   }
-
-  if (engineType === 'migrationEngine') {
-    return 'migration-engine'
-  }
-
-  if (engineType === 'queryEngine') {
-    return 'query-engine'
-  }
-
-  if (engineType === 'prismaFmt') {
-    return 'prisma-fmt'
-  }
-
   if (engineType === 'native') {
     return binaryTarget
   }
@@ -510,15 +515,15 @@ function engineTypeToBinaryType(
   return engineType
 }
 
-function mapKeys<T extends object>(
+function mapKeys<T extends object, K extends keyof T>(
   obj: T,
-  mapper: (key: keyof T) => string,
+  mapper: (key: K) => string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
+) {
   return Object.entries(obj).reduce((acc, [key, value]) => {
-    acc[mapper(key as keyof T)] = value
+    acc[mapper(key as K)] = value
     return acc
-  }, {})
+  }, {} as Record<string, any>)
 }
 
 export async function maybeCopyToTmp(file: string): Promise<string> {

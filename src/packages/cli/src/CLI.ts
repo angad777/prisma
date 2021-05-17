@@ -9,9 +9,8 @@ import {
   unknownCommand,
 } from '@prisma/sdk'
 import { Version } from './Version'
-import { download } from '@prisma/fetch-engine'
 import { link } from '@prisma/sdk'
-const pkg = require('../package.json') // eslint-disable-line @typescript-eslint/no-var-requires
+import { ensureBinariesExist } from '@prisma/engines'
 
 /**
  * CLI command
@@ -26,13 +25,16 @@ export class CLI implements Command {
   ) {}
 
   async parse(argv: string[]): Promise<string | Error> {
-    // parse the args according to the following spec
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--version': Boolean,
       '-v': '--version',
+      '--json': Boolean, // for -v
       '--experimental': Boolean,
+      '--preview-feature': Boolean,
+      '--early-access-feature': Boolean,
+      '--telemetry-information': String,
     })
 
     if (isError(args)) {
@@ -40,15 +42,12 @@ export class CLI implements Command {
     }
 
     if (args['--version']) {
-      await this.downloadBinaries()
+      await ensureBinariesExist()
       return Version.new().parse(argv)
     }
 
     // display help for help flag or no subcommand
     if (args._.length === 0 || args['--help']) {
-      if (args['--experimental']) {
-        return CLI.experimentalHelp
-      }
       return CLI.help
     }
 
@@ -65,35 +64,35 @@ export class CLI implements Command {
     if (cmd) {
       // if we have that subcommand, let's ensure that the binary is there in case the command needs it
       if (this.ensureBinaries.includes(cmdName)) {
-        await this.downloadBinaries()
+        await ensureBinariesExist()
       }
 
-      const argsForCmd = args['--experimental']
-        ? [...args._.slice(1), `--experimental=${args['--experimental']}`]
-        : args._.slice(1)
+      let argsForCmd: string[]
+      if (args['--experimental']) {
+        argsForCmd = [
+          ...args._.slice(1),
+          `--experimental=${args['--experimental']}`,
+        ]
+      } else if (args['--preview-feature']) {
+        argsForCmd = argsForCmd = [
+          ...args._.slice(1),
+          `--preview-feature=${args['--preview-feature']}`,
+        ]
+      } else if (args['--early-access-feature']) {
+        argsForCmd = argsForCmd = [
+          ...args._.slice(1),
+          `--early-access-feature=${args['--early-access-feature']}`,
+        ]
+      } else {
+        argsForCmd = args._.slice(1)
+      }
+
       return cmd.parse(argsForCmd)
     }
     // unknown command
     return unknownCommand(CLI.help, args._[0])
   }
 
-  private async downloadBinaries(): Promise<void> {
-    const binaryPath = eval(`require('path').join(__dirname, '../')`)
-    const version = (pkg && pkg.prisma && pkg.prisma.version) || 'latest'
-    await download({
-      binaries: {
-        'query-engine': binaryPath,
-        'migration-engine': binaryPath,
-        'introspection-engine': binaryPath,
-        'prisma-fmt': binaryPath,
-      },
-      showProgress: true,
-      version,
-      failSilent: false,
-    })
-  }
-
-  // help function
   private help(error?: string): string | HelpError {
     if (error) {
       return new HelpError(`\n${chalk.bold.red(`!`)} ${error}\n${CLI.help}`)
@@ -101,7 +100,6 @@ export class CLI implements Command {
     return CLI.help
   }
 
-  // static help template
   private static help = format(`
     ${
       process.platform === 'win32' ? '' : chalk.bold.green('◭  ')
@@ -116,63 +114,34 @@ export class CLI implements Command {
     ${chalk.bold('Commands')}
 
                 init   Setup Prisma for your app
-          introspect   Get the datamodel of your database
             generate   Generate artifacts (e.g. Prisma Client)
-              format   Formats your schema
+                  db   Manage your database schema and lifecycle
+             migrate   Migrate your database
+              studio   Browse your data with Prisma Studio
+              format   Format your schema
 
     ${chalk.bold('Flags')}
 
-      --experimental   Show and run experimental Prisma commands
+         --preview-feature   Run Preview Prisma commands
 
     ${chalk.bold('Examples')}
 
       Setup a new Prisma project
       ${chalk.dim('$')} prisma init
 
-      Introspect an existing database
-      ${chalk.dim('$')} prisma introspect
-
-      Generate artifacts (e.g. Prisma Client)
-      ${chalk.dim('$')} prisma generate
-  `)
-
-  // static help template
-  private static experimentalHelp = format(`
-    ${
-      process.platform === 'win32' ? '' : chalk.bold.green('◭  ')
-    }Prisma is a modern DB toolkit to query, migrate and model your database (${link(
-    'https://prisma.io',
-  )})
-
-    ${chalk.bold('Usage')}
-
-      ${chalk.dim('$')} prisma [command]
-
-    ${chalk.bold('Commands')}
-
-                init   Setup Prisma for your app
-          introspect   Get the datamodel of your database
-            generate   Generate artifacts (e.g. Prisma Client)
-             migrate   Migrate your schema ${chalk.dim('(experimental)')}
-              studio   Run Prisma Studio ${chalk.dim('(experimental)')}
-              format   Formats your schema
-
-    ${chalk.bold('Flags')}
-
-      --experimental   Show and run experimental Prisma commands
-
-    ${chalk.bold('Examples')}
-
-      Initialize files for a new Prisma project
-      ${chalk.dim('$')} prisma init
-
-      Introspect an existing database
-      ${chalk.dim('$')} prisma introspect
-
       Generate artifacts (e.g. Prisma Client)
       ${chalk.dim('$')} prisma generate
 
-      Save your changes into a migration
-      ${chalk.dim('$')} prisma migrate save --experimental
+      Browse your data
+      ${chalk.dim('$')} prisma studio
+
+      Create migrations from your Prisma schema, apply them to the database, generate artifacts (e.g. Prisma Client)
+      ${chalk.dim('$')} prisma migrate dev
+  
+      Pull the schema from an existing database, updating the Prisma schema
+      ${chalk.dim('$')} prisma db pull
+
+      Push the Prisma schema state to the database
+      ${chalk.dim('$')} prisma db push
   `)
 }

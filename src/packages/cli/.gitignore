@@ -3,23 +3,20 @@ migration-engine*
 query-engine*
 introspection-engine*
 prisma-fmt*
+libquery*
 yarn-error.log
 dist
 build
 .DS_Store
-download-build
 runtime
 examples
-!sqlite.test.db
-tmp
-tmp-sqlite
-tmp-mysql
-tmp-postgresql
+**/tmp-*
+**/tmp
 @prisma
-pkg-build
 download-done
 prisma-client
 preinstall
+install
 
 prisma
 .envrc
@@ -27,3 +24,6 @@ test
 /prisma-client
 write-test
 prisma-cli*.tgz
+pnpm-lock.yaml
+
+/src/__tests__/version-test-engines

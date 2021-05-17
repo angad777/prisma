@@ -1,20 +1,15 @@
 import fs from 'fs'
 import path from 'path'
-import {
-  CompilerOptions,
-  createCompilerHost,
-  createProgram,
-  ModuleKind,
-  ScriptTarget,
-} from 'typescript'
-import * as ts from 'typescript'
 import { generateInFolder } from '../../utils/generateInFolder'
 import rimraf from 'rimraf'
 import { promisify } from 'util'
 import { getPackedPackage } from '@prisma/sdk'
+import { compileFile } from '../../utils/compileFile'
+import tsd from 'tsd'
+import formatter from 'tsd/dist/lib/formatter'
 const del = promisify(rimraf)
 
-jest.setTimeout(30000)
+jest.setTimeout(100000)
 
 let packageSource: string
 beforeAll(async () => {
@@ -23,53 +18,46 @@ beforeAll(async () => {
 
 describe('valid types', () => {
   const subDirs = getSubDirs(__dirname)
-  for (const dir of subDirs) {
+  test.concurrent.each(subDirs)('%s', async (dir) => {
     const testName = path.basename(dir)
 
-    test(testName, async () => {
-      const nodeModules = path.join(dir, 'node_modules')
-      if (fs.existsSync(nodeModules)) {
-        await del(nodeModules)
-      }
-      await generateInFolder({
-        projectDir: dir,
-        useLocalRuntime: false,
-        transpile: true,
-        packageSource,
-      })
-      const filePath = path.join(dir, 'index.ts')
-      expect(() => compileFile(filePath)).not.toThrow()
+    const nodeModules = path.join(dir, 'node_modules')
+    if (fs.existsSync(nodeModules)) {
+      await del(nodeModules)
+    }
+    await generateInFolder({
+      projectDir: dir,
+      useLocalRuntime: false,
+      transpile: true,
+      packageSource,
     })
-  }
+    const indexPath = path.join(dir, 'test.ts')
+    const tsdTestPath = path.join(dir, 'index.test-d.ts')
+
+    if (fs.existsSync(tsdTestPath)) {
+      await runTsd(dir)
+    }
+
+    if (testName.startsWith('unhappy')) {
+      await expect(compileFile(indexPath)).rejects.toThrow()
+    } else {
+      await expect(compileFile(indexPath)).resolves.not.toThrow()
+    }
+  })
 })
+
+async function runTsd(dir: string) {
+  const diagnostics = await tsd({
+    cwd: dir,
+  })
+  if (diagnostics && diagnostics.length > 0) {
+    throw new Error(formatter(diagnostics))
+  }
+}
 
 function getSubDirs(dir: string): string[] {
   const files = fs.readdirSync(dir)
   return files
     .map((file) => path.join(dir, file))
     .filter((file) => fs.lstatSync(file).isDirectory())
-}
-
-function compileFile(filePath: string): void {
-  const options: CompilerOptions = {
-    module: ModuleKind.CommonJS,
-    target: ScriptTarget.ES2018,
-    lib: ['lib.esnext.d.ts', 'lib.dom.d.ts'],
-    declaration: true,
-    strict: true,
-    esModuleInterop: true,
-    noEmitOnError: true,
-    skipLibCheck: false,
-  }
-
-  const compilerHost = createCompilerHost(options)
-  compilerHost.writeFile = (fileName, file) => {}
-
-  const program = createProgram([filePath], options, compilerHost)
-  const result = program.emit()
-
-  if (result.diagnostics.length > 0) {
-    const formatted = ts.formatDiagnostics(result.diagnostics, compilerHost)
-    throw new Error('Compilation Error\n' + formatted)
-  }
 }

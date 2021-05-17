@@ -1,25 +1,39 @@
-import { DMMF } from './dmmf-types'
+import { DMMF } from '@prisma/generator-helper'
 import { Dictionary, keyBy, ScalarTypeTable, keyBy2 } from './utils/common'
 
 export class DMMFClass implements DMMF.Document {
   public datamodel: DMMF.Datamodel
   public schema: DMMF.Schema
-  public mappings: DMMF.Mapping[]
+  public mappings: DMMF.Mappings
   public queryType: DMMF.OutputType
   public mutationType: DMMF.OutputType
-  public outputTypes: DMMF.OutputType[]
-  public outputTypeMap: Dictionary<DMMF.OutputType> = {}
-  public inputTypes: DMMF.InputType[]
+
+  public outputTypes: { model: DMMF.OutputType[]; prisma: DMMF.OutputType[] }
+  public outputTypeMap: Dictionary<DMMF.OutputType>
+
+  public inputObjectTypes: {
+    model?: DMMF.InputType[]
+    prisma: DMMF.InputType[]
+  }
   public inputTypeMap: Dictionary<DMMF.InputType>
-  public enumMap: Dictionary<DMMF.Enum>
+
+  public enumMap: Dictionary<DMMF.SchemaEnum>
+
+  public datamodelEnumMap: Dictionary<DMMF.DatamodelEnum>
   public modelMap: Dictionary<DMMF.Model>
-  public mappingsMap: Dictionary<DMMF.Mapping>
+  public mappingsMap: Dictionary<DMMF.ModelMapping>
   public rootFieldMap: Dictionary<DMMF.SchemaField>
   constructor({ datamodel, schema, mappings }: DMMF.Document) {
     this.datamodel = datamodel
     this.schema = schema
+
+    const type = this.schema.inputObjectTypes.prisma.find(
+      (t) => t.name === 'OperatorCreateNestedOneWithoutAccountsInput',
+    )
+
     this.mappings = mappings
     this.enumMap = this.getEnumMap()
+    this.datamodelEnumMap = this.getDatamodelEnumMap()
     this.queryType = this.getQueryType()
     this.mutationType = this.getMutationType()
     this.modelMap = this.getModelMap()
@@ -28,19 +42,21 @@ export class DMMFClass implements DMMF.Document {
 
     this.outputTypeMap = this.getMergedOutputTypeMap()
 
-    this.resolveOutputTypes(this.outputTypes)
+    this.resolveOutputTypes()
 
-    this.inputTypes = this.schema.inputTypes
+    this.inputObjectTypes = this.schema.inputObjectTypes
     this.inputTypeMap = this.getInputTypeMap()
-    this.resolveInputTypes(this.inputTypes)
-    this.resolveFieldArgumentTypes(this.outputTypes, this.inputTypeMap)
+    this.resolveInputTypes()
+    this.resolveFieldArgumentTypes()
     this.mappingsMap = this.getMappingsMap()
 
     // needed as references are not kept
     this.queryType = this.outputTypeMap.Query
     this.mutationType = this.outputTypeMap.Mutation
-    this.outputTypes = this.outputTypes
     this.rootFieldMap = this.getRootFieldMap()
+  }
+  get [Symbol.toStringTag]() {
+    return 'DMMFClass'
   }
   protected outputTypeToMergedOutputType = (
     outputType: DMMF.OutputType,
@@ -52,14 +68,30 @@ export class DMMFClass implements DMMF.Document {
       fields: outputType.fields,
     }
   }
-  protected resolveOutputTypes(types: DMMF.OutputType[]) {
-    for (const type of types) {
+  protected resolveOutputTypes() {
+    for (const type of this.outputTypes.model) {
       for (const field of type.fields) {
         if (
           typeof field.outputType.type === 'string' &&
           !ScalarTypeTable[field.outputType.type]
         ) {
           field.outputType.type =
+            this.outputTypeMap[field.outputType.type] ||
+            this.outputTypeMap[field.outputType.type] ||
+            this.enumMap[field.outputType.type] ||
+            field.outputType.type
+        }
+      }
+      type.fieldMap = keyBy(type.fields, 'name')
+    }
+    for (const type of this.outputTypes.prisma) {
+      for (const field of type.fields) {
+        if (
+          typeof field.outputType.type === 'string' &&
+          !ScalarTypeTable[field.outputType.type]
+        ) {
+          field.outputType.type =
+            this.outputTypeMap[field.outputType.type] ||
             this.outputTypeMap[field.outputType.type] ||
             this.enumMap[field.outputType.type] ||
             field.outputType.type
@@ -68,87 +100,111 @@ export class DMMFClass implements DMMF.Document {
       type.fieldMap = keyBy(type.fields, 'name')
     }
   }
-  protected resolveInputTypes(types: DMMF.InputType[]) {
-    for (const type of types) {
+  protected resolveInputTypes() {
+    const inputTypes = this.inputObjectTypes.prisma
+    if (this.inputObjectTypes.model) {
+      inputTypes.push(...this.inputObjectTypes.model)
+    }
+    for (const type of inputTypes) {
       for (const field of type.fields) {
-        const first = field.inputType[0].type
-        if (
-          typeof first === 'string' &&
-          !ScalarTypeTable[first] &&
-          (this.inputTypeMap[first] || this.enumMap[first])
-        ) {
-          field.inputType[0].type =
-            this.inputTypeMap[first] ||
-            this.enumMap[first] ||
-            field.inputType[0].type
-        }
-        const second = field.inputType[1] && field.inputType[1].type
-        if (
-          typeof second === 'string' &&
-          !ScalarTypeTable[second] &&
-          (this.inputTypeMap[second] || this.enumMap[second])
-        ) {
-          field.inputType[1].type =
-            this.inputTypeMap[second] ||
-            this.enumMap[second] ||
-            field.inputType[1].type
+        for (const fieldInputType of field.inputTypes) {
+          const fieldType = fieldInputType.type
+          if (
+            typeof fieldType === 'string' &&
+            !ScalarTypeTable[fieldType] &&
+            (this.inputTypeMap[fieldType] || this.enumMap[fieldType])
+          ) {
+            fieldInputType.type =
+              this.inputTypeMap[fieldType] ||
+              this.enumMap[fieldType] ||
+              fieldType
+          }
         }
       }
       type.fieldMap = keyBy(type.fields, 'name')
     }
   }
-  protected resolveFieldArgumentTypes(
-    types: DMMF.OutputType[],
-    inputTypeMap: Dictionary<DMMF.InputType>,
-  ) {
-    for (const type of types) {
+  protected resolveFieldArgumentTypes() {
+    for (const type of this.outputTypes.prisma) {
       for (const field of type.fields) {
         for (const arg of field.args) {
-          const first = arg.inputType[0].type
-          if (typeof first === 'string' && !ScalarTypeTable[first]) {
-            arg.inputType[0].type =
-              inputTypeMap[first] ||
-              this.enumMap[first] ||
-              arg.inputType[0].type
+          for (const argInputType of arg.inputTypes) {
+            const argType = argInputType.type
+            if (typeof argType === 'string' && !ScalarTypeTable[argType]) {
+              argInputType.type =
+                this.inputTypeMap[argType] || this.enumMap[argType] || argType
+            }
           }
-          const second = arg.inputType[1] && arg.inputType[1].type
-          if (
-            second &&
-            typeof second === 'string' &&
-            !ScalarTypeTable[second]
-          ) {
-            arg.inputType[1].type =
-              inputTypeMap[second] ||
-              this.enumMap[second] ||
-              arg.inputType[1].type
+        }
+      }
+    }
+    for (const type of this.outputTypes.model) {
+      for (const field of type.fields) {
+        for (const arg of field.args) {
+          for (const argInputType of arg.inputTypes) {
+            const argType = argInputType.type
+            if (typeof argType === 'string' && !ScalarTypeTable[argType]) {
+              argInputType.type =
+                this.inputTypeMap[argType] ||
+                this.enumMap[argType] ||
+                argInputType.type
+            }
           }
         }
       }
     }
   }
   protected getQueryType(): DMMF.OutputType {
-    return this.schema.outputTypes.find((t) => t.name === 'Query')!
+    return this.schema.outputObjectTypes.prisma.find((t) => t.name === 'Query')!
   }
   protected getMutationType(): DMMF.OutputType {
-    return this.schema.outputTypes.find((t) => t.name === 'Mutation')!
+    return this.schema.outputObjectTypes.prisma.find(
+      (t) => t.name === 'Mutation',
+    )!
   }
-  protected getOutputTypes(): DMMF.OutputType[] {
-    return this.schema.outputTypes.map(this.outputTypeToMergedOutputType)
+  protected getOutputTypes(): {
+    model: DMMF.OutputType[]
+    prisma: DMMF.OutputType[]
+  } {
+    return {
+      model: this.schema.outputObjectTypes.model.map(
+        this.outputTypeToMergedOutputType,
+      ),
+      prisma: this.schema.outputObjectTypes.prisma.map(
+        this.outputTypeToMergedOutputType,
+      ),
+    }
   }
-  protected getEnumMap(): Dictionary<DMMF.Enum> {
-    return keyBy(this.schema.enums, 'name')
+  protected getDatamodelEnumMap(): Dictionary<DMMF.DatamodelEnum> {
+    return keyBy(this.datamodel.enums, 'name')
+  }
+  protected getEnumMap(): Dictionary<DMMF.SchemaEnum> {
+    return {
+      ...keyBy(this.schema.enumTypes.prisma, 'name'),
+      ...(this.schema.enumTypes.model
+        ? keyBy(this.schema.enumTypes.model, 'name')
+        : undefined),
+    }
   }
   protected getModelMap(): Dictionary<DMMF.Model> {
     return keyBy(this.datamodel.models, 'name')
   }
   protected getMergedOutputTypeMap(): Dictionary<DMMF.OutputType> {
-    return keyBy(this.outputTypes, 'name')
+    return {
+      ...keyBy(this.outputTypes.model, 'name'),
+      ...keyBy(this.outputTypes.prisma, 'name'),
+    }
   }
   protected getInputTypeMap(): Dictionary<DMMF.InputType> {
-    return keyBy(this.schema.inputTypes, 'name')
+    return {
+      ...(this.schema.inputObjectTypes.model
+        ? keyBy(this.schema.inputObjectTypes.model, 'name')
+        : undefined),
+      ...keyBy(this.schema.inputObjectTypes.prisma, 'name'),
+    }
   }
-  protected getMappingsMap(): Dictionary<DMMF.Mapping> {
-    return keyBy(this.mappings, 'model')
+  protected getMappingsMap(): Dictionary<DMMF.ModelMapping> {
+    return keyBy(this.mappings.modelOperations, 'model')
   }
   protected getRootFieldMap(): Dictionary<DMMF.SchemaField> {
     return keyBy2(this.queryType.fields, this.mutationType.fields, 'name')

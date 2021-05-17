@@ -1,9 +1,12 @@
 import path from 'path'
 import { getGenerators } from '../../getGenerators'
-import { pick } from '../../pick'
 import { omit } from '../../omit'
+import { pick } from '../../pick'
+import { resolveBinary } from '../../resolveBinary'
+import { getPlatform } from '@prisma/get-platform'
+import stripAnsi from 'strip-ansi'
 
-jest.setTimeout(10000)
+jest.setTimeout(20000)
 
 describe('getGenerators', () => {
   test('basic', async () => {
@@ -31,9 +34,6 @@ describe('getGenerators', () => {
             "queryEngine",
             "migrationEngine",
           ],
-          "requiresGenerators": Array [
-            "prisma-client-js",
-          ],
         },
       ]
     `)
@@ -46,7 +46,12 @@ describe('getGenerators', () => {
       ]),
     ).toMatchInlineSnapshot(`
       Object {
-        "datamodel": "generator gen {
+        "datamodel": "datasource db {
+        provider = \\"sqlite\\"
+        url      = \\"file:./dev.db\\"
+      }
+
+      generator gen {
         provider      = \\"predefined-generator\\"
         binaryTargets = [\\"darwin\\"]
       }
@@ -55,7 +60,19 @@ describe('getGenerators', () => {
         id   Int    @id
         name String
       }",
-        "datasources": Array [],
+        "datasources": Array [
+          Object {
+            "activeProvider": "sqlite",
+            "name": "db",
+            "provider": Array [
+              "sqlite",
+            ],
+            "url": Object {
+              "fromEnvVar": null,
+              "value": "file:./dev.db",
+            },
+          },
+        ],
         "otherGenerators": Array [],
       }
     `)
@@ -69,9 +86,45 @@ describe('getGenerators', () => {
         "config": Object {},
         "name": "gen",
         "previewFeatures": Array [],
-        "provider": "predefined-generator",
+        "provider": Object {
+          "fromEnvVar": null,
+          "value": "predefined-generator",
+        },
       }
     `)
+
+    generators.forEach((g) => g.stop())
+  })
+
+  test('inject engines', async () => {
+    const aliases = {
+      'predefined-generator': {
+        generatorPath: path.join(__dirname, 'generator'),
+        outputPath: __dirname,
+      },
+    }
+
+    const migrationEngine = await resolveBinary('migration-engine')
+    const queryEngine = await resolveBinary('query-engine')
+
+    const generators = await getGenerators({
+      schemaPath: path.join(__dirname, 'valid-minimal-schema.prisma'),
+      providerAliases: aliases,
+      binaryPathsOverride: {
+        queryEngine,
+      },
+    })
+
+    const options = generators.map((g) => g.options?.binaryPaths)
+
+    const platform = await getPlatform()
+
+    // we override queryEngine, so its paths should be equal to the one of the generator
+    expect(options[0]?.queryEngine?.[platform]).toBe(queryEngine)
+    // we did not override the migrationEngine, so their paths should not be equal
+    expect(options[0]?.migrationEngine?.[platform]).not.toBe(migrationEngine)
+
+    generators.forEach((g) => g.stop())
   })
 
   test('fail on platforms', async () => {
@@ -104,5 +157,37 @@ describe('getGenerators', () => {
         providerAliases: aliases,
       }),
     ).rejects.toThrow('Unknown')
+  })
+
+  test('fail if datasource is missing', async () => {
+    expect.assertions(1)
+    const aliases = {
+      'predefined-generator': {
+        generatorPath: path.join(__dirname, 'generator'),
+        outputPath: __dirname,
+      },
+    }
+
+    try {
+      await getGenerators({
+        schemaPath: path.join(__dirname, 'missing-datasource-schema.prisma'),
+        providerAliases: aliases,
+      })
+    } catch (e) {
+      expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
+        "
+        You don't have any datasource defined in your schema.prisma.
+        You can define a datasource like this:
+
+        datasource db {
+          provider = \\"postgresql\\"
+          url      = env(\\"DB_URL\\")
+        }
+
+        More information in our documentation:
+        https://pris.ly/d/prisma-schema
+        "
+      `)
+    }
   })
 })

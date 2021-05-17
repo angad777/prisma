@@ -10,22 +10,24 @@ describe('batching', () => {
     const requests: any[] = []
 
     const fetcher = new PrismaClientFetcher({
-      connect: () => Promise.resolve(),
-      engine: {
+      $connect: () => Promise.resolve(),
+      _engine: {
         requestBatch: (batch) => {
           batches.push(batch)
-          return batch.map(() => ({ data: { data: null }, elapsed: 0.2 }))
+          return Promise.resolve(
+            batch.map(() => ({ data: { data: null }, elapsed: 0.2 })),
+          )
         },
         request: (request) => {
           requests.push(request)
-          return { data: { data: null }, elapsed: 0.3 }
+          return Promise.resolve({ data: { data: null }, elapsed: 0.3 })
         },
       },
     })
 
     await Promise.all([
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -35,7 +37,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOneUser',
+          rootField: 'findUniqueUser',
         }),
         isList: false,
         rootField: 'query',
@@ -47,7 +49,7 @@ describe('batching', () => {
         },
       }),
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -57,7 +59,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOneUser',
+          rootField: 'findUniqueUser',
         }),
         isList: false,
         rootField: 'query',
@@ -73,26 +75,44 @@ describe('batching', () => {
     expect(batches).toMatchInlineSnapshot(`
       Array [
         Array [
-          "query {
-        findOneUser(where: {
-          id: \\"1\\"
+          query {
+        findUniqueUser(where: {
+          id: "1"
         }) {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }",
-          "query {
-        findOneUser(where: {
-          id: \\"2\\"
+      },
+          query {
+        findUniqueUser(where: {
+          id: "2"
         }) {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }",
+      },
         ],
       ]
     `)
@@ -105,22 +125,24 @@ describe('batching', () => {
     const requests: any[] = []
 
     const fetcher = new PrismaClientFetcher({
-      connect: () => Promise.resolve(),
-      engine: {
+      $connect: () => Promise.resolve(),
+      _engine: {
         requestBatch: (batch) => {
           batches.push(batch)
-          return batch.map(() => ({ data: { data: null }, elapsed: 0.2 }))
+          return Promise.resolve(
+            batch.map(() => ({ data: { data: null }, elapsed: 0.2 })),
+          )
         },
         request: (request) => {
           requests.push(request)
-          return { data: { data: null }, elapsed: 0.3 }
+          return Promise.resolve({ data: { data: null }, elapsed: 0.3 })
         },
       },
     })
 
     await Promise.all([
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -130,7 +152,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOnePost',
+          rootField: 'findUniquePost',
         }),
         isList: false,
         rootField: 'query',
@@ -140,7 +162,7 @@ describe('batching', () => {
         },
       }),
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -150,7 +172,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOneUser',
+          rootField: 'findUniqueUser',
         }),
         isList: false,
         rootField: 'query',
@@ -164,9 +186,9 @@ describe('batching', () => {
     expect(batches).toMatchInlineSnapshot(`Array []`)
     expect(requests).toMatchInlineSnapshot(`
       Array [
-        "query {
-        findOnePost(where: {
-          id: \\"1\\"
+        query {
+        findUniquePost(where: {
+          id: "1"
         }) {
           id
           createdAt
@@ -175,18 +197,28 @@ describe('batching', () => {
           title
           content
           authorId
+          optionnal
         }
-      }",
-        "query {
-        findOneUser(where: {
-          id: \\"2\\"
+      },
+        query {
+        findUniqueUser(where: {
+          id: "2"
         }) {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }",
+      },
       ]
     `)
   })
@@ -197,22 +229,24 @@ describe('batching', () => {
     const requests: any[] = []
 
     const fetcher = new PrismaClientFetcher({
-      connect: () => Promise.resolve(),
-      engine: {
+      $connect: () => Promise.resolve(),
+      _engine: {
         requestBatch: (batch) => {
           batches.push(batch)
-          return batch.map(() => ({ data: { data: null }, elapsed: 0.2 }))
+          return Promise.resolve(
+            batch.map(() => ({ data: { data: null }, elapsed: 0.2 })),
+          )
         },
         request: (request) => {
           requests.push(request)
-          return { data: { data: null }, elapsed: 0.3 }
+          return Promise.resolve({ data: { data: null }, elapsed: 0.3 })
         },
       },
     })
 
     await Promise.all([
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -222,7 +256,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOneUser',
+          rootField: 'findUniqueUser',
         }),
         isList: false,
         rootField: 'query',
@@ -230,7 +264,7 @@ describe('batching', () => {
         args: { where: { email: 'a@a.de' } },
       }),
       fetcher.request({
-        clientMethod: 'findOne',
+        clientMethod: 'findUnique',
         dataPath: [],
         document: makeDocument({
           dmmf,
@@ -240,7 +274,7 @@ describe('batching', () => {
             },
           },
           rootTypeName: 'query',
-          rootField: 'findOneUser',
+          rootField: 'findUniqueUser',
         }),
         isList: false,
         rootField: 'query',
@@ -252,26 +286,44 @@ describe('batching', () => {
     expect(batches).toMatchInlineSnapshot(`Array []`)
     expect(requests).toMatchInlineSnapshot(`
       Array [
-        "query {
-        findOneUser(where: {
-          email: \\"a@a.de\\"
+        query {
+        findUniqueUser(where: {
+          email: "a@a.de"
         }) {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }",
-        "query {
-        findOneUser(where: {
-          id: \\"2\\"
+      },
+        query {
+        findUniqueUser(where: {
+          id: "2"
         }) {
           id
           email
           name
           json
+          countFloat
+          countInt1
+          countInt2
+          countInt3
+          countInt4
+          countInt5
+          countInt6
+          lastLoginAt
+          coinflips
         }
-      }",
+      },
       ]
     `)
   })

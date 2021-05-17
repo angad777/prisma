@@ -9,12 +9,12 @@ import {
   pick,
   format,
   HelpError,
+  canConnectToDatabase,
 } from '@prisma/sdk'
 import chalk from 'chalk'
 import fs from 'fs'
 import path from 'path'
 import { promisify } from 'util'
-import { canConnectToDatabase } from '@prisma/migrate'
 import { DMMF } from '@prisma/generator-helper'
 import equal from 'fast-deep-equal'
 
@@ -24,25 +24,30 @@ type IncorrectFieldTypes = Array<{
   remoteField: DMMF.Field
 }>
 
-/**
- * $ prisma version
- */
 export class Doctor implements Command {
   static new(): Doctor {
     return new Doctor()
   }
 
-  // static help template
   private static help = format(`
-    Check, if the schema and the database are in sync.
+Check, if the schema and the database are in sync.
 
-    ${chalk.bold('Usage')}
+${chalk.bold('Usage')}
 
-    With an existing schema.prisma:
-      ${chalk.dim('$')} prisma doctor
+  ${chalk.dim('$')} prisma doctor [options]
 
-    Or specify a schema:
-      ${chalk.dim('$')} prisma doctor --schema=./schema.prisma
+${chalk.bold('Options')}
+
+  -h, --help   Display this help message
+    --schema   Custom path to your Prisma schema
+
+${chalk.bold('Examples')}
+
+  With an existing schema.prisma
+    ${chalk.dim('$')} prisma doctor
+
+  Or specify a schema
+    ${chalk.dim('$')} prisma doctor --schema=./schema.prisma
 
   `)
 
@@ -51,6 +56,7 @@ export class Doctor implements Command {
       '--help': Boolean,
       '-h': '--help',
       '--schema': String,
+      '--telemetry-information': String,
     })
 
     if (args instanceof Error) {
@@ -65,13 +71,21 @@ export class Doctor implements Command {
 
     if (!schemaPath) {
       throw new Error(
-        `Either provide ${chalk.greenBright('--schema')} ${chalk.bold(
-          'or',
-        )} make sure that you are in a folder with a ${chalk.greenBright(
+        `Could not find a ${chalk.bold(
           'schema.prisma',
-        )} file.`,
+        )} file that is required for this command.\nYou can either provide it with ${chalk.greenBright(
+          '--schema',
+        )}, set it as \`prisma.schema\` in your package.json or put it into the default location ${chalk.greenBright(
+          './prisma/schema.prisma',
+        )} https://pris.ly/d/prisma-schema-location`,
       )
     }
+
+    console.log(
+      chalk.dim(
+        `Prisma schema loaded from ${path.relative(process.cwd(), schemaPath)}`,
+      ),
+    )
 
     const schema = await readFile(schemaPath, 'utf-8')
     const localDmmf = await getDMMF({ datamodel: schema })
@@ -94,7 +108,7 @@ export class Doctor implements Command {
 
     let datamodel
     try {
-      const result = await engine.introspect(schema, true)
+      const result = await engine.introspect(schema)
       datamodel = result.datamodel
     } finally {
       engine.stop()
@@ -115,7 +129,7 @@ export class Doctor implements Command {
     const getFieldName = (f: DMMF.Field) =>
       f.dbNames && f.dbNames.length > 0 ? f.dbNames[0] : f.name
 
-    let messages: string[] = []
+    const messages: string[] = []
 
     for (const { localModel, remoteModel } of modelPairs) {
       let missingModel = false

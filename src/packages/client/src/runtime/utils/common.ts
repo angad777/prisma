@@ -1,7 +1,9 @@
 import chalk from 'chalk'
 import indent from 'indent-string'
 import leven from 'js-levenshtein'
-import { DMMF } from '../dmmf-types'
+import { BaseField, DMMF } from '../dmmf-types'
+import Decimal from 'decimal.js'
+import { DMMFClass } from '../dmmf'
 
 export interface Dictionary<T> {
   [key: string]: T
@@ -49,6 +51,9 @@ export const ScalarTypeTable = {
   ID: true,
   UUID: true,
   Json: true,
+  Bytes: true,
+  Decimal: true,
+  BigInt: true,
 }
 
 export function isScalar(str: string): boolean {
@@ -56,6 +61,24 @@ export function isScalar(str: string): boolean {
     return false
   }
   return ScalarTypeTable[str] || false
+}
+
+export const needNamespace = {
+  Json: 'JsonValue',
+  Decimal: 'Decimal',
+}
+
+export function needsNamespace(field: BaseField, dmmf: DMMFClass): boolean {
+  if (typeof field.type === 'string') {
+    if (dmmf.datamodelEnumMap[field.type]) {
+      return false
+    }
+    if (GraphQLScalarToJSTypeTable[field.type]) {
+      return Boolean(needNamespace[field.type])
+    }
+  }
+
+  return true
 }
 
 export const GraphQLScalarToJSTypeTable = {
@@ -68,6 +91,9 @@ export const GraphQLScalarToJSTypeTable = {
   ID: 'string',
   UUID: 'string',
   Json: 'JsonValue',
+  Bytes: 'Buffer',
+  Decimal: ['Decimal', 'number', 'string'],
+  BigInt: ['bigint', 'number'],
 }
 
 export const JSOutputTypeToInputType = {
@@ -81,7 +107,7 @@ export const JSTypeToGraphQLType = {
 }
 
 export function stringifyGraphQLType(
-  type: string | DMMF.InputType | DMMF.Enum,
+  type: string | DMMF.InputType | DMMF.SchemaEnum,
 ) {
   if (typeof type === 'string') {
     return type
@@ -97,13 +123,32 @@ export function wrapWithList(str: string, isList: boolean) {
   return str
 }
 
+// from https://github.com/excitement-engineer/graphql-iso-date/blob/master/src/utils/validator.js#L121
+const RFC_3339_REGEX = /^(\d{4}-(0[1-9]|1[012])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9]|60))(\.\d{1,})?(([Z])|([+|-]([01][0-9]|2[0-3]):[0-5][0-9]))$/
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 export function getGraphQLType(
   value: any,
-  potentialType?: string | DMMF.Enum | DMMF.InputType,
+  potentialType?: string | DMMF.SchemaEnum | DMMF.InputType,
 ): string {
   if (value === null) {
     return 'null'
   }
+
+  if (Object.prototype.toString.call(value) === '[object BigInt]') {
+    return 'BigInt'
+  }
+
+  // https://github.com/MikeMcl/decimal.js/blob/master/decimal.js#L4499
+  if (Decimal.isDecimal(value)) {
+    return 'Decimal'
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return 'Bytes'
+  }
+
   if (Array.isArray(value)) {
     let scalarTypes = value.reduce((acc, val) => {
       const type = getGraphQLType(val, potentialType)
@@ -132,30 +177,22 @@ export function getGraphQLType(
     return 'DateTime'
   }
   if (jsType === 'string') {
-    if (
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-        value,
-      )
-    ) {
+    if (UUID_REGEX.test(value)) {
       return 'UUID'
     }
     const date = new Date(value)
     if (
       potentialType &&
       typeof potentialType === 'object' &&
-      (potentialType as DMMF.Enum).values &&
-      (potentialType as DMMF.Enum).values.includes(value)
+      (potentialType as DMMF.SchemaEnum).values &&
+      (potentialType as DMMF.SchemaEnum).values.includes(value)
     ) {
       return potentialType.name
     }
     if (date.toString() === 'Invalid Date') {
       return 'String'
     }
-    if (
-      /\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z)/.test(
-        value,
-      )
-    ) {
+    if (RFC_3339_REGEX.test(value)) {
       return 'DateTime'
     }
   }
@@ -199,38 +236,37 @@ export function getSuggestion(
 }
 
 export function stringifyInputType(
-  input: string | DMMF.InputType | DMMF.Enum,
-  greenKeys: boolean = false,
+  input: string | DMMF.InputType | DMMF.SchemaEnum,
+  greenKeys = false,
 ): string {
   if (typeof input === 'string') {
     return input
   }
-  if ((input as DMMF.Enum).values) {
+  if ((input as DMMF.SchemaEnum).values) {
     return `enum ${input.name} {\n${indent(
-      (input as DMMF.Enum).values.join(', '),
+      (input as DMMF.SchemaEnum).values.join(', '),
       2,
     )}\n}`
   } else {
     const body = indent(
       (input as DMMF.InputType).fields // TS doesn't discriminate based on existence of fields properly
         .map((arg) => {
-          const argInputType = arg.inputType[0]
           const key = `${arg.name}`
           const str = `${greenKeys ? chalk.green(key) : key}${
-            argInputType.isRequired ? '' : '?'
+            arg.isRequired ? '' : '?'
           }: ${chalk.white(
-            arg.inputType
-              .map((argType) =>
-                argIsInputType(argType.type)
-                  ? argType.type.name
-                  : wrapWithList(
-                      stringifyGraphQLType(argType.type),
-                      argType.isList,
-                    ),
-              )
+            arg.inputTypes
+              .map((argType) => {
+                return wrapWithList(
+                  argIsInputType(argType.type)
+                    ? argType.type.name
+                    : stringifyGraphQLType(argType.type),
+                  argType.isList,
+                )
+              })
               .join(' | '),
           )}`
-          if (!argInputType.isRequired) {
+          if (!arg.isRequired) {
             return chalk.dim(str)
           }
 
@@ -245,7 +281,7 @@ export function stringifyInputType(
   }
 }
 
-function argIsInputType(arg: DMMF.ArgType): arg is DMMF.InputType {
+export function argIsInputType(arg: DMMF.ArgType): arg is DMMF.InputType {
   if (typeof arg === 'string') {
     return false
   }
@@ -254,9 +290,12 @@ function argIsInputType(arg: DMMF.ArgType): arg is DMMF.InputType {
 }
 
 export function getInputTypeName(
-  input: string | DMMF.InputType | DMMF.SchemaField | DMMF.Enum,
+  input: string | DMMF.InputType | DMMF.SchemaField | DMMF.SchemaEnum,
 ) {
   if (typeof input === 'string') {
+    if (input === 'Null') {
+      return 'null'
+    }
     return input
   }
 
@@ -264,7 +303,7 @@ export function getInputTypeName(
 }
 
 export function getOutputTypeName(
-  input: string | DMMF.OutputType | DMMF.SchemaField | DMMF.Enum,
+  input: string | DMMF.OutputType | DMMF.SchemaField | DMMF.SchemaEnum,
 ) {
   if (typeof input === 'string') {
     return input
@@ -274,37 +313,54 @@ export function getOutputTypeName(
 }
 
 export function inputTypeToJson(
-  input: string | DMMF.InputType | DMMF.Enum,
+  input: string | DMMF.InputType | DMMF.SchemaEnum,
   isRequired: boolean,
-  nameOnly: boolean = false,
+  nameOnly = false,
 ): string | object {
   if (typeof input === 'string') {
+    if (input === 'Null') {
+      return 'null'
+    }
     return input
   }
 
-  if ((input as DMMF.Enum).values) {
-    return (input as DMMF.Enum).values.join(' | ')
+  if ((input as DMMF.SchemaEnum).values) {
+    return (input as DMMF.SchemaEnum).values.join(' | ')
   }
 
   // TS "Trick" :/
   const inputType: DMMF.InputType = input as DMMF.InputType
+
   // If the parent type is required and all fields are non-scalars,
   // it's very useful to show to the user, which options they actually have
   const showDeepType =
     isRequired &&
-    inputType.fields.every((arg) => arg.inputType[0].kind === 'object') &&
-    !inputType.isWhereType &&
-    !inputType.atLeastOne
+    inputType.fields.every(
+      (arg) =>
+        arg.inputTypes[0].location === 'inputObjectTypes' ||
+        arg.inputTypes[1]?.location === 'inputObjectTypes',
+    )
+
   if (nameOnly) {
     return getInputTypeName(input)
   }
 
   return inputType.fields.reduce((acc, curr) => {
-    const argInputType = curr.inputType[0]
-    acc[curr.name + (argInputType.isRequired ? '' : '?')] =
-      curr.isRelationFilter && !showDeepType && !argInputType.isRequired
-        ? getInputTypeName(argInputType.type)
-        : inputTypeToJson(argInputType.type, argInputType.isRequired, true)
+    let str = ''
+
+    if (!showDeepType && !curr.isRequired) {
+      str = curr.inputTypes
+        .map((argType) => getInputTypeName(argType.type))
+        .join(' | ')
+    } else {
+      str = curr.inputTypes
+        .map((argInputType) =>
+          inputTypeToJson(argInputType.type, curr.isRequired, true),
+        )
+        .join(' | ')
+    }
+
+    acc[curr.name + (curr.isRequired ? '' : '?')] = str
     return acc
   }, {})
 }
@@ -393,4 +449,18 @@ export function capitalize(str: string): string {
  */
 export function lowerCase(name: string): string {
   return name.substring(0, 1).toLowerCase() + name.substring(1)
+}
+
+export function isGroupByOutputName(type: string): boolean {
+  return type.endsWith('GroupByOutputType')
+}
+
+export function isSchemaEnum(type: any): type is DMMF.SchemaEnum {
+  return (
+    typeof type === 'object' &&
+    type.name &&
+    typeof type.name === 'string' &&
+    type.values &&
+    Array.isArray(type.values)
+  )
 }

@@ -1,21 +1,35 @@
-import { PrismaClient } from './@prisma/client'
+import { PrismaClient, Prisma } from './@prisma/client'
 
 const prisma = new PrismaClient({
-  errorFormat: 'pretty',
-  __internal: {
-    engine: {
-      enableEngineDebugMode: true,
+  rejectOnNotFound: {},
+  log: [
+    {
+      emit: 'event',
+      level: 'query',
     },
-  },
-} as any)
+  ],
+})
 
 async function main() {
-  await prisma.connect()
-  const result = await (prisma as any).__internal_triggerPanic(true)
-  // const result = await prisma.queryRaw(`SELECT 1`)
-  console.log(result)
+  const users = await prisma.user.findMany({
+    select: {
+      _count: {
+        select: {
+          eventsAttending: true,
+        },
+      },
+    },
+  })
+
+  // maybe I want to use the same selection set in a second query:
+  const result2 = await prisma.user.findUnique({
+    where: { id: 'x' },
+  })
+
+  console.log(users)
 }
 
 main().catch((e) => {
   console.error(e)
+  prisma.$disconnect()
 })

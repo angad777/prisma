@@ -156,8 +156,8 @@ function getValueLength(
   }
 
   if (typeof value === 'object') {
-    return (
-      getLongestLine(`${key}: ${stripAnsi(stringifiedValue)}`) - indent.length
+    return Math.abs(
+      getLongestLine(`${key}: ${stripAnsi(stringifiedValue)}`) - indent.length,
     )
   }
 

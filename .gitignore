@@ -3,18 +3,22 @@ node_modules
 yarn-error.log
 dist
 build
-examples
 tmp
 pnpm-debug.log
 sandbox
 .DS_Store
 query-engine*
 
-*.db
-
+*tmp.db
 dist/
 
-copy-photon.sh
 *.tsbuildinfo
 .env*
 .prisma
+.pnpm-store
+
+.vscode
+!.vscode/launch.json.default
+coverage
+
+.eslintcache

@@ -1,6 +1,9 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  collectCoverage: process.env.CI ? true : false,
+  coverageReporters: ['clover'],
+  coverageDirectory: 'src/__tests__/coverage',
   modulePathIgnorePatterns: [
     'build/',
     'dist/',
@@ -8,12 +11,20 @@ module.exports = {
     'runtime/',
     '@prisma',
     'index.ts',
+    'index.d.ts',
     'index.js',
+    'index.test-d.ts',
+    '.bench.ts',
+    '__tests__/benchmarks/',
+    '__tests__/types/.*/test.ts',
     'stack.js',
+    'runner.js',
+    'node_modules/',
+    'exhaustive-schema/generated-dmmf.ts',
+    '__helpers__',
   ],
-  globals: {
-    'ts-jest': {
-      packageJson: 'package.json',
-    },
-  },
+  collectCoverageFrom: ['src/**/*.ts', '!**/__tests__/**/*'],
+  snapshotSerializers: ['./helpers/jestSnapshotSerializer'],
+  testTimeout: 90000,
+  setupFiles: ['./helpers/jestSetup.js'],
 }
