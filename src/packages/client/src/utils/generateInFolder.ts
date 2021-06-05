@@ -115,7 +115,7 @@ export async function generateInFolder({
   const binaryPaths = useNapi
     ? {
         libqueryEngineNapi: {
-          [platform]: path.join(enginesPath, getNapiName(platform, 'fs')),
+          [platform]: napiLibraryPath,
         },
       }
     : {
@@ -126,6 +126,10 @@ export async function generateInFolder({
           ),
         },
       }
+
+  // we make sure that we are in the project root
+  // this only applies to generated test clients
+  process.chdir(projectDir)
 
   await generateClient({
     binaryPaths,
@@ -144,7 +148,6 @@ export async function generateInFolder({
     engineVersion: 'local',
     activeProvider: config.datasources[0].activeProvider,
   })
-
   const time = performance.now() - before
   debug(`Done generating client in ${time}`)
 
