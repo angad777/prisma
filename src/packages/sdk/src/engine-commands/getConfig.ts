@@ -1,6 +1,6 @@
 import Debug from '@prisma/debug'
 import { NApiEngineTypes } from '@prisma/engine-core'
-import { EngineTypes } from '@prisma/fetch-engine'
+import { BinaryType } from '@prisma/fetch-engine'
 import { DataSource, GeneratorConfig } from '@prisma/generator-helper'
 import chalk from 'chalk'
 import execa from 'execa'
@@ -8,6 +8,7 @@ import fs from 'fs'
 import tmpWrite from 'temp-write'
 import { promisify } from 'util'
 import { resolveBinary } from '../resolveBinary'
+import { isNodeAPISupported } from '@prisma/get-platform'
 
 const debug = Debug('prisma:getConfig')
 
@@ -38,7 +39,9 @@ export class GetConfigError extends Error {
 export async function getConfig(
   options: GetConfigOptions,
 ): Promise<ConfigMetaFormat> {
+
   const useNapi = process.env.PRISMA_FORCE_NAPI === 'true'
+
   let data: ConfigMetaFormat | undefined
   if (useNapi) {
     data = await getConfigNAPI(options)
@@ -47,6 +50,8 @@ export async function getConfig(
   }
 
   if (!data) throw new GetConfigError(`Failed to return any data`)
+
+  // TODO This has been outdated for ages and needs to be handled differently and/or removed
   if (
     data.datasources?.[0]?.provider?.[0] === 'sqlite' &&
     data.generators.some((g) => g.previewFeatures.includes('createMany'))
@@ -64,9 +69,10 @@ async function getConfigNAPI(
 ): Promise<ConfigMetaFormat> {
   let data: ConfigMetaFormat | undefined
   const queryEnginePath = await resolveBinary(
-    EngineTypes.libqueryEngineNapi,
+    BinaryType.libqueryEngineNapi,
     options.prismaPath,
   )
+  await isNodeAPISupported()
   debug(`Using N-API Query Engine at: ${queryEnginePath}`)
   try {
     const NApiQueryEngine = require(queryEnginePath) as NApiEngineTypes.NAPI
@@ -74,6 +80,7 @@ async function getConfigNAPI(
       datamodel: options.datamodel,
       datasourceOverrides: {},
       ignoreEnvVarErrors: options.ignoreEnvVarErrors ?? false,
+      env: process.env,
     })
   } catch (e) {
     let error
@@ -102,7 +109,7 @@ async function getConfigBinary(
   let data: ConfigMetaFormat | undefined
 
   const queryEnginePath = await resolveBinary(
-    EngineTypes.queryEngine,
+    BinaryType.queryEngine,
     options.prismaPath,
   )
   debug(`Using Query Engine Binary at: ${queryEnginePath}`)

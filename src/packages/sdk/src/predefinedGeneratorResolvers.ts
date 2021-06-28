@@ -1,14 +1,13 @@
+import Debug from '@prisma/debug'
 import chalk from 'chalk'
 import execa from 'execa'
 import fs from 'fs'
 import hasYarn from 'has-yarn'
 import path from 'path'
+import resolvePkg from 'resolve-pkg'
 import { logger } from '.'
 import { getCommandWithExecutor } from './getCommandWithExecutor'
-import { findUpAsync as findUp } from './utils/find'
-
-// hide require from bundlers
-const load = require
+const debug = Debug('prisma:generator')
 
 export type GeneratorPaths = {
   outputPath: string
@@ -25,23 +24,24 @@ export type PredefinedGeneratorResolvers = {
   [generatorName: string]: GeneratorResolver
 }
 
-async function getPrismaClientDir(
-  baseDir: string,
-): Promise<string | undefined> {
-  const handler = (base: string, item: string) => {
-    const itemPath = path.join(base, item)
+/**
+ * Tries to find a `@prisma/client` that is next to the `prisma` CLI
+ * @param baseDir from where to start looking from
+ * @returns `@prisma/client` location
+ */
+function findPrismaClientDir(baseDir: string) {
+  const prismaCLIDir = resolvePkg('prisma', { cwd: baseDir })
+  const prismaClientDir = resolvePkg('@prisma/client', { cwd: baseDir })
 
-    // if package.json `@prisma/client`, return `base`
-    if (load(itemPath).name === '@prisma/client') {
-      return base
-    }
-
-    return false
-  }
+  // If CLI not found, we can only continue forward (likely a test)
+  if (prismaCLIDir === undefined) return prismaClientDir
 
   return (
-    await findUp(baseDir, ['package.json'], ['f'], ['d', 'l'], 1, handler)
-  )[0]
+    // the client and the cli are a unit and should be found together
+    prismaClientDir === path.resolve(prismaCLIDir, '..', '@prisma/client')
+      ? prismaClientDir
+      : undefined
+  )
 }
 
 export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
@@ -62,10 +62,13 @@ export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
       `)
   },
   'prisma-client-js': async (baseDir, version) => {
-    const prismaClientDir = await getPrismaClientDir(baseDir)
+    let prismaClientDir = findPrismaClientDir(baseDir)
 
     checkYarnVersion()
     checkTypeScriptVersion()
+
+    debug('baseDir', baseDir)
+    debug('prismaClientDir', prismaClientDir)
 
     if (!prismaClientDir && !process.env.PRISMA_GENERATE_SKIP_AUTOINSTALL) {
       if (
@@ -96,7 +99,8 @@ export const predefinedGeneratorResolvers: PredefinedGeneratorResolvers = {
       await installPackage(baseDir, `-D prisma@${version ?? 'latest'}`)
       await installPackage(baseDir, `@prisma/client@${version ?? 'latest'}`)
 
-      const prismaClientDir = await getPrismaClientDir(baseDir)
+      // resolvePkg has caching, so we trick it not to do it 👇
+      prismaClientDir = findPrismaClientDir(path.join('.', baseDir))
 
       if (!prismaClientDir) {
         throw new Error(
@@ -178,24 +182,25 @@ function checkYarnVersion() {
 }
 
 /**
- * Warn, if typescript is below `4.1.0` or if it is not install locally or globally
+ * Warn, if typescript is below `4.1.0` and is install locally
  * Because Template Literal Types are required for generating Prisma Client types.
  */
 function checkTypeScriptVersion() {
   const minVersion = '4.1.0'
   try {
-    const output = execa.sync('tsc', ['-v'], {
-      preferLocal: true,
-    })
-    if (output.stdout) {
-      const currentVersion = output.stdout.split(' ')[1]
+    const typescriptPath = resolvePkg('typescript', { cwd: process.cwd() })
+    const typescriptPkg =
+      typescriptPath && path.join(typescriptPath, 'package.json')
+    if (typescriptPkg && fs.existsSync(typescriptPkg)) {
+      const pjson = require(typescriptPkg)
+      const currentVersion = pjson.version
       if (semverLt(currentVersion, minVersion)) {
-        throw new Error(
-          `Your ${chalk.bold(
-            'typescript',
-          )} version is ${currentVersion}, which is outdated. Please update it to ${chalk.bold(
+        logger.warn(
+          `Prisma detected that your ${chalk.bold(
+            'TypeScript',
+          )} version ${currentVersion} is outdated. If you want to use Prisma Client with TypeScript please update it to version ${chalk.bold(
             minVersion,
-          )} or ${chalk.bold('newer')} in order to use Prisma Client.`,
+          )} or ${chalk.bold('newer')}`,
         )
       }
     }
@@ -203,6 +208,7 @@ function checkTypeScriptVersion() {
     // They do not have TS installed, we ignore (example: JS project)
   }
 }
+
 /**
  * Returns true, if semver version `a` is lower than `b`
  * Note: This obviously doesn't support the full semver spec.
