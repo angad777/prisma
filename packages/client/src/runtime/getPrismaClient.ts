@@ -7,11 +7,11 @@ import type { DataSource, GeneratorConfig } from '@prisma/generator-helper'
 import { logger } from '@prisma/sdk'
 import { mapPreviewFeatures } from '@prisma/sdk'
 import { tryLoadEnvs } from '@prisma/sdk'
+import { ClientEngineType, getClientEngineType } from '@prisma/sdk'
 import { AsyncResource } from 'async_hooks'
 import fs from 'fs'
 import path from 'path'
 import * as sqlTemplateTag from 'sql-template-tag'
-import { ClientEngineType, getClientEngineType } from './utils/getClientEngineType'
 import { DMMFClass } from './dmmf'
 import { DMMF } from './dmmf-types'
 import { getLogLevel } from './getLogLevel'
@@ -235,6 +235,12 @@ export interface GetPrismaClientConfig {
    * @remarks only used for the purpose of data proxy
    */
   inlineDatasources?: InlineDatasources
+
+  /**
+   * The string hash that was produced for a given schema
+   * @remarks only used for the purpose of data proxy
+   */
+  inlineSchemaHash?: string
 }
 
 const actionOperationMap = {
@@ -402,6 +408,7 @@ export function getPrismaClient(config: GetPrismaClientConfig) {
           activeProvider: config.activeProvider,
           inlineSchema: config.inlineSchema,
           inlineDatasources: config.inlineDatasources,
+          inlineSchemaHash: config.inlineSchemaHash,
         }
 
         // Append the mongodb experimental flag if the provider is mongodb
@@ -413,6 +420,7 @@ export function getPrismaClient(config: GetPrismaClientConfig) {
         }
 
         debug(`clientVersion: ${config.clientVersion}`)
+        debug(`clientEngineType: ${this._clientEngineType}`)
 
         this._engine = this.getEngine()
         void this._getActiveProvider()
@@ -1264,7 +1272,8 @@ new PrismaClient({
               const newDataPath = [...dataPath, prefix, field.name]
               const newArgs = deepSet(args, newDataPath, fieldArgs || true)
 
-              return modelClientBuilders[field.type]({
+              // TODO: ask dom if it can be anything else than a string
+              return modelClientBuilders[field.type as string]({
                 operation,
                 actionName,
                 args: newArgs,

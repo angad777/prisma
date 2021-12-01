@@ -1,5 +1,6 @@
 import fs from 'fs'
-import { ClientEngineType } from '../../runtime/utils/getClientEngineType'
+import crypto from 'crypto'
+import { ClientEngineType } from '@prisma/sdk'
 
 const readFile = fs.promises.readFile
 
@@ -13,9 +14,11 @@ const readFile = fs.promises.readFile
 export async function buildInlineSchema(clientEngineType: ClientEngineType, schemaPath: string) {
   if (clientEngineType === ClientEngineType.DataProxy) {
     const b64Schema = (await readFile(schemaPath)).toString('base64')
+    const schemaHash = crypto.createHash('sha256').update(b64Schema).digest('hex')
 
     return `
-config.inlineSchema = '${b64Schema}'`
+config.inlineSchema = '${b64Schema}'
+config.inlineSchemaHash = '${schemaHash}'`
   }
 
   return ``
