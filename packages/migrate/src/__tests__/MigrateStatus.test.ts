@@ -1,13 +1,8 @@
-import fs from 'fs-jetpack'
-import path from 'path'
-import { MigrateStatus } from '../commands/MigrateStatus'
 import { jestConsoleContext, jestContext } from '@prisma/sdk'
-import { tearDownMysql } from '../utils/setupMysql'
-import { SetupParams, setupPostgres, tearDownPostgres } from '../utils/setupPostgres'
+
+import { MigrateStatus } from '../commands/MigrateStatus'
 
 const ctx = jestContext.new().add(jestConsoleContext()).assemble()
-
-process.env.GITHUB_ACTIONS = '1'
 
 describe('common', () => {
   it('should fail if no schema file', async () => {
@@ -30,8 +25,8 @@ describe('common', () => {
     ctx.fixture('empty')
     const result = MigrateStatus.new().parse(['--early-access-feature'])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-            Prisma Migrate was in Early Access and is now in Preview.
-            Replace the --early-access-feature flag with --preview-feature.
+            Prisma Migrate was in Early Access and is now Generally Available.
+            Remove the --early-access-feature flag.
           `)
   })
 })

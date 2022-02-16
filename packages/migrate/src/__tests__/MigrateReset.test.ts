@@ -1,12 +1,12 @@
+import { jestConsoleContext, jestContext } from '@prisma/sdk'
+import prompt from 'prompts'
+
+import { MigrateReset } from '../commands/MigrateReset'
+
 process.env.PRISMA_MIGRATE_SKIP_GENERATE = '1'
-process.env.GITHUB_ACTIONS = '1'
 
 // TODO: Windows: some snapshot tests fail on Windows because of emoji.
 const testIf = (condition: boolean) => (condition ? test : test.skip)
-
-import prompt from 'prompts'
-import { MigrateReset } from '../commands/MigrateReset'
-import { jestConsoleContext, jestContext } from '@prisma/sdk'
 
 const ctx = jestContext.new().add(jestConsoleContext()).assemble()
 
@@ -57,8 +57,8 @@ describe('common', () => {
     ctx.fixture('empty')
     const result = MigrateReset.new().parse(['--early-access-feature'])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-            Prisma Migrate was in Early Access and is now in Preview.
-            Replace the --early-access-feature flag with --preview-feature.
+            Prisma Migrate was in Early Access and is now Generally Available.
+            Remove the --early-access-feature flag.
           `)
   })
 })
@@ -239,14 +239,16 @@ describe('reset', () => {
     expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
   })
 
-  testIf(process.platform !== 'win32')('reset - seed.ts', async () => {
-    ctx.fixture('seed-sqlite-ts')
-    prompt.inject(['y']) // simulate user yes input
+  testIf(process.platform !== 'win32')(
+    'reset - seed.ts',
+    async () => {
+      ctx.fixture('seed-sqlite-ts')
+      prompt.inject(['y']) // simulate user yes input
 
-    const result = MigrateReset.new().parse([])
-    await expect(result).resolves.toMatchInlineSnapshot(``)
+      const result = MigrateReset.new().parse([])
+      await expect(result).resolves.toMatchInlineSnapshot(``)
 
-    expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
+      expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
       Prisma schema loaded from prisma/schema.prisma
       Datasource "db": SQLite database "dev.db" at "file:./dev.db"
 
@@ -260,9 +262,11 @@ describe('reset', () => {
 
       🌱  The seed command has been executed.
     `)
-    expect(ctx.mocked['console.warn'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
-    expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
-  })
+      expect(ctx.mocked['console.warn'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
+      expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
+    },
+    10_000,
+  )
 
   it('reset - legacy seed (no config in package.json)', async () => {
     ctx.fixture('seed-sqlite-legacy')

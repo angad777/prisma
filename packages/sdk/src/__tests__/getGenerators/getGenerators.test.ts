@@ -3,11 +3,12 @@ import { BinaryType } from '@prisma/fetch-engine'
 import { getPlatform } from '@prisma/get-platform'
 import path from 'path'
 import stripAnsi from 'strip-ansi'
+
 import { getGenerators } from '../../get-generators/getGenerators'
-import { omit } from '../../omit'
-import { pick } from '../../pick'
 import { resolveBinary } from '../../resolveBinary'
 import { jestConsoleContext, jestContext } from '../../utils/jestContext'
+import { omit } from '../../utils/omit'
+import { pick } from '../../utils/pick'
 
 const ctx = jestContext.new().add(jestConsoleContext()).assemble()
 
@@ -729,7 +730,7 @@ describe('getGenerators', () => {
         You can define a model like this:
 
         model User {
-          id    String  @id @default(dbgenerated()) @map(\\"_id\\") @db.ObjectId
+          id    String  @id @default(auto()) @map(\\"_id\\") @db.ObjectId
           email String  @unique
           name  String?
         }

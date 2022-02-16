@@ -2,7 +2,7 @@
   "name": "@prisma/sdk",
   "version": "0.0.0",
   "main": "dist/index.js",
-  "module": "dist/esm/index.mjs",
+  "module": "esm/dist/index.mjs",
   "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
@@ -22,11 +22,7 @@
     "dev": "DEV=true node -r esbuild-register helpers/build.ts",
     "build": "node -r esbuild-register helpers/build.ts",
     "prepublishOnly": "pnpm run build && pnpm run test",
-    "format": "prettier --write .",
-    "lint": "eslint --cache --fix --ext .ts .",
-    "lint-ci": "eslint --ext .ts .",
-    "test": "jest --verbose",
-    "precommit": "lint-staged"
+    "test": "jest --verbose"
   },
   "files": [
     "README.md",
@@ -35,21 +31,12 @@
   ],
   "devDependencies": {
     "@types/jest": "27.4.0",
-    "@types/node": "12.20.42",
+    "@types/node": "12.20.46",
     "@types/resolve": "1.20.1",
     "@types/shell-quote": "1.7.1",
     "@types/tar": "6.1.1",
-    "@typescript-eslint/eslint-plugin": "5.9.0",
-    "@typescript-eslint/parser": "5.9.0",
     "esbuild": "0.13.14",
-    "eslint": "8.6.0",
-    "eslint-config-prettier": "8.3.0",
-    "eslint-plugin-eslint-comments": "3.2.0",
-    "eslint-plugin-jest": "25.3.4",
-    "eslint-plugin-prettier": "4.0.0",
-    "jest": "27.4.7",
-    "lint-staged": "12.1.5",
-    "prettier": "2.5.1",
+    "jest": "27.5.1",
     "ts-jest": "27.1.3",
     "ts-node": "10.4.0",
     "typescript": "4.5.4"
@@ -57,17 +44,17 @@
   "dependencies": {
     "@prisma/debug": "workspace:*",
     "@prisma/engine-core": "workspace:*",
-    "@prisma/engines": "3.9.0-7.7a48cf2c1aea8ec23e6dff2500845f31bdf2c468",
-    "@prisma/fetch-engine": "3.9.0-7.7a48cf2c1aea8ec23e6dff2500845f31bdf2c468",
+    "@prisma/engines": "3.10.0-35.df3e66c7ef4a7f610fe93a8b5ad84656754f02c1",
+    "@prisma/fetch-engine": "3.10.0-35.df3e66c7ef4a7f610fe93a8b5ad84656754f02c1",
     "@prisma/generator-helper": "workspace:*",
-    "@prisma/get-platform": "3.9.0-7.7a48cf2c1aea8ec23e6dff2500845f31bdf2c468",
+    "@prisma/get-platform": "3.10.0-35.df3e66c7ef4a7f610fe93a8b5ad84656754f02c1",
     "@timsuchanek/copy": "1.4.5",
     "archiver": "5.3.0",
     "arg": "5.0.1",
     "chalk": "4.1.2",
-    "checkpoint-client": "1.1.20",
+    "checkpoint-client": "1.1.21",
     "cli-truncate": "2.1.0",
-    "dotenv": "14.2.0",
+    "dotenv": "16.0.0",
     "escape-string-regexp": "4.0.0",
     "execa": "5.1.1",
     "find-up": "5.0.0",
@@ -81,7 +68,7 @@
     "p-map": "4.0.0",
     "read-pkg-up": "7.0.1",
     "replace-string": "3.1.0",
-    "resolve": "1.21.0",
+    "resolve": "1.22.0",
     "rimraf": "3.0.2",
     "shell-quote": "1.7.3",
     "string-width": "4.2.3",
@@ -93,12 +80,6 @@
     "tempy": "1.0.1",
     "terminal-link": "2.1.1",
     "tmp": "0.2.1"
-  },
-  "lint-staged": {
-    "*.ts": [
-      "eslint",
-      "prettier --write"
-    ]
   },
   "sideEffects": false
 }

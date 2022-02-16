@@ -1,5 +1,6 @@
-import { MigrateResolve } from '../commands/MigrateResolve'
 import { jestConsoleContext, jestContext } from '@prisma/sdk'
+
+import { MigrateResolve } from '../commands/MigrateResolve'
 import { SetupParams, setupPostgres, tearDownPostgres } from '../utils/setupPostgres'
 
 const ctx = jestContext.new().add(jestConsoleContext()).assemble()
@@ -25,8 +26,8 @@ describe('common', () => {
     ctx.fixture('empty')
     const result = MigrateResolve.new().parse(['--early-access-feature'])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-            Prisma Migrate was in Early Access and is now in Preview.
-            Replace the --early-access-feature flag with --preview-feature.
+            Prisma Migrate was in Early Access and is now Generally Available.
+            Remove the --early-access-feature flag.
           `)
   })
   it('should fail if no --applied or --rolled-back', async () => {
@@ -67,11 +68,11 @@ describe('sqlite', () => {
     ctx.fixture('existing-db-1-failed-migration')
     const result = MigrateResolve.new().parse(['--applied=does_not_exist'])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-P3017
+            P3017
 
-The migration does_not_exist could not be found. Please make sure that the migration exists, and that you included the whole name of the directory. (example: "20201231000000_initial_migration")
+            The migration does_not_exist could not be found. Please make sure that the migration exists, and that you included the whole name of the directory. (example: "20201231000000_initial_migration")
 
-`)
+          `)
   })
 
   it('--applied should fail if migration is already applied', async () => {
@@ -167,10 +168,9 @@ The migration does_not_exist could not be found. Please make sure that the migra
 })
 
 describe('postgresql', () => {
-  // Skipping because timeout is now too long to wait for
-  it.skip('should fail if no postgres db - invalid url', async () => {
+  it('should fail if no db - invalid url', async () => {
     ctx.fixture('schema-only-postgresql')
-    jest.setTimeout(6000)
+    jest.setTimeout(10000)
 
     const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
     await expect(result).rejects.toMatchInlineSnapshot(`
@@ -180,8 +180,32 @@ describe('postgresql', () => {
           `)
 
     expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
+      Environment variables loaded from prisma/.env
       Prisma schema loaded from prisma/invalid-url.prisma
       Datasource "my_db": PostgreSQL database "mydb", schema "public" at "doesnotexist:5432"
+    `)
+    expect(ctx.mocked['console.log'].mock.calls).toMatchSnapshot()
+    expect(ctx.mocked['console.error'].mock.calls).toMatchSnapshot()
+  })
+})
+
+const describeIf = (condition: boolean) => (condition ? describe : describe.skip)
+
+describeIf(!process.env.TEST_SKIP_COCKROACHDB)('cockroachdb', () => {
+  it('should fail if no db - invalid url', async () => {
+    ctx.fixture('schema-only-cockroachdb')
+    jest.setTimeout(10000)
+
+    const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
+    await expect(result).rejects.toMatchInlineSnapshot(`
+            P1001: Can't reach database server at \`something.cockroachlabs.cloud\`:\`26257\`
+
+            Please make sure your database server is running at \`something.cockroachlabs.cloud\`:\`26257\`.
+          `)
+
+    expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
+      Prisma schema loaded from prisma/invalid-url.prisma
+      Datasource "db": CockroachDB database "clustername.defaultdb", schema "public" at "something.cockroachlabs.cloud:26257"
     `)
     expect(ctx.mocked['console.log'].mock.calls).toMatchSnapshot()
     expect(ctx.mocked['console.error'].mock.calls).toMatchSnapshot()

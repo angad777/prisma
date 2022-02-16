@@ -1,18 +1,19 @@
-import execa from 'execa'
+import { watch as createWatcher } from 'chokidar'
 import * as esbuild from 'esbuild'
-import { flatten } from '../blaze/flatten'
-import { pipe } from '../blaze/pipe'
-import { map } from '../blaze/map'
-import { transduce } from '../blaze/transduce'
+import execa from 'execa'
 import glob from 'globby'
 import path from 'path'
-import { watch as createWatcher } from 'chokidar'
-import { tscPlugin } from './plugins/tscPlugin'
-import { onErrorPlugin } from './plugins/onErrorPlugin'
-import { fixImportsPlugin } from './plugins/fixImportsPlugin'
+
+import { flatten } from '../blaze/flatten'
 import { handle } from '../blaze/handle'
-import { replaceWithPlugin } from './plugins/replaceWithPlugin'
+import { map } from '../blaze/map'
+import { pipe } from '../blaze/pipe'
+import { transduce } from '../blaze/transduce'
 import { depCheckPlugin } from './plugins/depCheckPlugin'
+import { fixImportsPlugin } from './plugins/fixImportsPlugin'
+import { onErrorPlugin } from './plugins/onErrorPlugin'
+import { replaceWithPlugin } from './plugins/replaceWithPlugin'
+import { tscPlugin } from './plugins/tscPlugin'
 
 export type BuildResult = esbuild.BuildResult
 export type BuildOptions = esbuild.BuildOptions & {
@@ -222,7 +223,7 @@ function getOutDir(options: BuildOptions) {
 
 // get the esm output path from an original path
 function getEsmOutDir(options: BuildOptions) {
-  return `${getOutDir(options)}/esm`
+  return `esm/${getOutDir(options)}`
 }
 
 // get the esm output file from an original path
@@ -231,7 +232,7 @@ function getEsmOutFile(options: BuildOptions) {
     const dirname = getOutDir(options)
     const filename = path.basename(options.outfile)
 
-    return `${dirname}/esm/${filename}`
+    return `esm/${dirname}/${filename}`
   }
 
   return undefined
