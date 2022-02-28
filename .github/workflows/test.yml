@@ -83,11 +83,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: '12'
@@ -131,11 +131,11 @@ jobs:
 
       - run: docker-compose -f docker/docker-compose.yml up --detach postgres postgres_isolated mysql mysql_isolated mssql mongo cockroachdb
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -185,11 +185,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -250,11 +250,11 @@ jobs:
       - run: docker-compose -f docker/docker-compose.yml up --detach ${{matrix.database}}
         if: matrix.database != 'sqlite'
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -320,11 +320,11 @@ jobs:
         run: |
           echo "PRISMA_CLIENT_ENGINE_TYPE=${{ matrix.queryEngine }}" >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -382,11 +382,11 @@ jobs:
         run: |
           echo "PRISMA_CLIENT_ENGINE_TYPE=${{ matrix.queryEngine }}" >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -452,11 +452,11 @@ jobs:
         run: |
           echo "PRISMA_CLIENT_ENGINE_TYPE=${{ matrix.queryEngine }}" >> $GITHUB_ENV
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -499,11 +499,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -610,11 +610,11 @@ jobs:
       - name: Setup MySQL
         run: bash .github/workflows/setup-mysql.sh
 
-      - uses: pnpm/action-setup@v2.2.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
@@ -776,11 +776,11 @@ jobs:
       - name: Setup MySQL
         run: bash .github/workflows/setup-mysql.sh
 
-      - uses: pnpm/action-setup@v2.1.0
+      - uses: pnpm/action-setup@v2.2.1
         with:
           version: latest
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v3
         with:
           cache: 'pnpm'
           node-version: ${{ matrix.node }}
