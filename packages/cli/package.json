@@ -67,9 +67,9 @@
   "devDependencies": {
     "@prisma/client": "workspace:*",
     "@prisma/debug": "workspace:*",
-    "@prisma/fetch-engine": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98",
+    "@prisma/fetch-engine": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465",
     "@prisma/generator-helper": "workspace:*",
-    "@prisma/get-platform": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98",
+    "@prisma/get-platform": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465",
     "@prisma/migrate": "workspace:*",
     "@prisma/sdk": "workspace:*",
     "@prisma/studio": "0.458.0",
@@ -80,7 +80,7 @@
     "@types/fs-extra": "9.0.13",
     "@types/jest": "27.4.1",
     "@types/rimraf": "3.0.2",
-    "@types/ws": "8.5.2",
+    "@types/ws": "8.5.3",
     "chalk": "4.1.2",
     "checkpoint-client": "1.1.21",
     "debug": "4.3.3",
@@ -118,7 +118,7 @@
     "preinstall": "node scripts/preinstall-entry.js"
   },
   "dependencies": {
-    "@prisma/engines": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98"
+    "@prisma/engines": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465"
   },
   "sideEffects": false
 }

@@ -63,10 +63,10 @@
     "@opentelemetry/api": "1.0.3",
     "@prisma/debug": "workspace:*",
     "@prisma/engine-core": "workspace:*",
-    "@prisma/engines": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98",
-    "@prisma/fetch-engine": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98",
+    "@prisma/engines": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465",
+    "@prisma/fetch-engine": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465",
     "@prisma/generator-helper": "workspace:*",
-    "@prisma/get-platform": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98",
+    "@prisma/get-platform": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465",
     "@prisma/migrate": "workspace:*",
     "@prisma/sdk": "workspace:*",
     "@timsuchanek/copy": "1.4.5",
@@ -74,8 +74,8 @@
     "@types/jest": "27.4.1",
     "@types/js-levenshtein": "1.1.1",
     "@types/mssql": "7.1.5",
-    "@types/node": "12.20.46",
-    "@types/pg": "8.6.4",
+    "@types/node": "12.20.47",
+    "@types/pg": "8.6.5",
     "arg": "5.0.1",
     "benchmark": "2.1.4",
     "chalk": "4.1.2",
@@ -121,7 +121,7 @@
     }
   },
   "dependencies": {
-    "@prisma/engines-version": "3.11.0-29.1ecb0b5984cec0435b72ec5ec5090f31bb21fe98"
+    "@prisma/engines-version": "3.12.0-13.f52c2eaa18292bdb57d7c1503e83c4123f17f465"
   },
   "sideEffects": false
 }
