@@ -49,7 +49,7 @@ describe('sqlite', () => {
   it('should fail if no sqlite db - empty schema', async () => {
     ctx.fixture('schema-only-sqlite')
     const result = MigrateResolve.new().parse(['--schema=./prisma/empty.prisma', '--applied=something_applied'])
-    await expect(result).rejects.toMatchInlineSnapshot(`P1003: SQLite database file doesn't exist`)
+    await expect(result).rejects.toMatchInlineSnapshot(`P1003: Database dev.db does not exist at dev.db`)
 
     expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
       Prisma schema loaded from prisma/empty.prisma
@@ -169,7 +169,7 @@ describe('sqlite', () => {
 describe('postgresql', () => {
   it('should fail if no db - invalid url', async () => {
     ctx.fixture('schema-only-postgresql')
-    jest.setTimeout(10000)
+    jest.setTimeout(10_000)
 
     const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
     await expect(result).rejects.toMatchInlineSnapshot(`
@@ -193,7 +193,7 @@ const describeIf = (condition: boolean) => (condition ? describe : describe.skip
 describeIf(!process.env.TEST_SKIP_COCKROACHDB)('cockroachdb', () => {
   it('should fail if no db - invalid url', async () => {
     ctx.fixture('schema-only-cockroachdb')
-    jest.setTimeout(10000)
+    jest.setTimeout(10_000)
 
     const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
     await expect(result).rejects.toMatchInlineSnapshot(`
