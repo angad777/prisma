@@ -1,20 +1,21 @@
 import { getCliQueryEngineBinaryType } from '@prisma/engines'
 import { getPlatform } from '@prisma/get-platform'
-import type { Command } from '@prisma/sdk'
+import type { Command } from '@prisma/internals'
 import {
   arg,
   BinaryType,
   engineEnvVarMap,
   format,
+  formatTable,
   getConfig,
+  getEngineVersion,
   getSchema,
   getSchemaPath,
-  getVersion,
   HelpError,
   isError,
   loadEnvFile,
   resolveBinary,
-} from '@prisma/sdk'
+} from '@prisma/internals'
 import chalk from 'chalk'
 import fs from 'fs'
 import path from 'path'
@@ -103,7 +104,7 @@ export class Version implements Command {
       rows.push(['Preview Features', featureFlags.join(', ')])
     }
 
-    return this.printTable(rows, args['--json'])
+    return formatTable(rows, { json: args['--json'] })
   }
 
   private async getFeatureFlags(schemaPath: string | null): Promise<string[]> {
@@ -135,25 +136,13 @@ export class Version implements Command {
     const envVar = engineEnvVarMap[binaryName]
     const pathFromEnv = process.env[envVar]
     if (pathFromEnv && fs.existsSync(pathFromEnv)) {
-      const version = await getVersion(pathFromEnv, binaryName)
+      const version = await getEngineVersion(pathFromEnv, binaryName)
       return { version, path: pathFromEnv, fromEnvVar: envVar }
     }
 
     const binaryPath = await resolveBinary(binaryName)
-    const version = await getVersion(binaryPath, binaryName)
+    const version = await getEngineVersion(binaryPath, binaryName)
     return { path: binaryPath, version }
-  }
-
-  private printTable(rows: string[][], json = false): string {
-    if (json) {
-      const result = rows.reduce((acc, [name, value]) => {
-        acc[slugify(name)] = value
-        return acc
-      }, {})
-      return JSON.stringify(result, null, 2)
-    }
-    const maxPad = rows.reduce((acc, curr) => Math.max(acc, curr[0].length), 0)
-    return rows.map(([left, right]) => `${left.padEnd(maxPad)} : ${right}`).join('\n')
   }
 
   public help(error?: string): string | HelpError {
@@ -163,8 +152,4 @@ export class Version implements Command {
 
     return Version.help
   }
-}
-
-function slugify(str: string): string {
-  return str.toString().toLowerCase().replace(/\s+/g, '-')
 }

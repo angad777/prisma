@@ -1,7 +1,7 @@
 import { getCliQueryEngineBinaryType } from '@prisma/engines'
 import { BinaryType, download } from '@prisma/fetch-engine'
 import { getPlatform } from '@prisma/get-platform'
-import { engineEnvVarMap, jestConsoleContext, jestContext } from '@prisma/sdk'
+import { engineEnvVarMap, jestConsoleContext, jestContext } from '@prisma/internals'
 import makeDir from 'make-dir'
 import path from 'path'
 
@@ -117,8 +117,8 @@ function cleanSnapshot(str: string, versionOverride?: string): string {
   const currentEngineCommit = currentEngineVersion.split('.').pop().split('-').pop()
   const defaultEngineVersion = packageJson.dependencies['@prisma/engines']
   const defaultEngineHash = defaultEngineVersion.split('.').pop()
-  str = str.replace(new RegExp(currentEngineCommit, 'g'), 'ENGINE_VERSION')
   str = str.replace(new RegExp(defaultEngineHash, 'g'), 'ENGINE_VERSION')
+  str = str.replace(new RegExp(currentEngineCommit, 'g'), 'ENGINE_VERSION')
 
   // replace studio version
   str = str.replace(packageJson.devDependencies['@prisma/studio-server'], 'STUDIO_VERSION')

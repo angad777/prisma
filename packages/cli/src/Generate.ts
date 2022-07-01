@@ -1,6 +1,4 @@
-/* eslint-disable eslint-comments/disable-enable-pair, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/restrict-template-expressions */
 import { enginesVersion } from '@prisma/engines'
-import { getSchemaPathAndPrint } from '@prisma/migrate'
 import {
   arg,
   Command,
@@ -19,7 +17,8 @@ import {
   missingGeneratorMessage,
   parseEnvValue,
   Platform,
-} from '@prisma/sdk'
+} from '@prisma/internals'
+import { getSchemaPathAndPrint } from '@prisma/migrate'
 import chalk from 'chalk'
 import fs from 'fs'
 import logUpdate from 'log-update'
@@ -49,9 +48,10 @@ ${chalk.bold('Usage')}
 
 ${chalk.bold('Options')}
 
-  -h, --help   Display this help message
-    --schema   Custom path to your Prisma schema
-     --watch   Watch the Prisma schema and rerun after a change
+    -h, --help   Display this help message
+      --schema   Custom path to your Prisma schema
+  --data-proxy   Enable the Data Proxy in the Prisma Client
+       --watch   Watch the Prisma schema and rerun after a change
 
 ${chalk.bold('Examples')}
 
@@ -102,6 +102,7 @@ ${chalk.bold('Examples')}
       '-h': '--help',
       '--watch': Boolean,
       '--schema': String,
+      '--data-proxy': Boolean,
       // Only used for checkpoint information
       '--postinstall': String,
       '--telemetry-information': String,
@@ -137,6 +138,7 @@ ${chalk.bold('Examples')}
         printDownloadProgress: !watchMode,
         version: enginesVersion,
         cliVersion: pkg.version,
+        dataProxy: !!args['--data-proxy'] || !!process.env.PRISMA_GENERATE_DATAPROXY,
       })
 
       if (!generators || generators.length === 0) {
@@ -259,6 +261,7 @@ Please run \`${getCommandWithExecutor('prisma generate')}\` to see the errors.`)
               printDownloadProgress: !watchMode,
               version: enginesVersion,
               cliVersion: pkg.version,
+              dataProxy: !!args['--data-proxy'] || !!process.env.PRISMA_GENERATE_DATAPROXY,
             })
 
             if (!generatorsWatch || generatorsWatch.length === 0) {

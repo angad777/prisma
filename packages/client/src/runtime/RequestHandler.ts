@@ -28,12 +28,17 @@ export type RequestParams = {
   callsite?: string
   rejectOnNotFound?: RejectOnNotFound
   runInTransaction?: boolean
-  showColors?: boolean
   engineHook?: EngineMiddleware
   args: any
   headers?: Record<string, string>
   transactionId?: string | number
   unpacker?: Unpacker
+}
+
+export type HandleErrorParams = {
+  error: any
+  clientMethod: string
+  callsite?: string
 }
 
 export type Request = {
@@ -46,14 +51,16 @@ export type Request = {
 function getRequestInfo(requests: Request[]) {
   const txId = requests[0].transactionId
   const inTx = requests[0].runInTransaction
-  const headers = requests[0].headers
+  const headers = requests[0].headers ?? {}
 
   // if the tx has a number for an id, then it's a regular batch tx
   const _inTx = typeof txId === 'number' && inTx ? true : undefined
   // if the tx has a string for id, it's an interactive transaction
   const _txId = typeof txId === 'string' && inTx ? txId : undefined
 
-  return { inTx: _inTx, headers: { transactionId: _txId, ...headers } }
+  if (_txId !== undefined) headers.transactionId = _txId
+
+  return { inTx: _inTx, headers }
 }
 
 export class RequestHandler {
@@ -97,7 +104,6 @@ export class RequestHandler {
     rejectOnNotFound,
     clientMethod,
     runInTransaction,
-    showColors,
     engineHook,
     args,
     headers,
@@ -152,37 +158,42 @@ export class RequestHandler {
         return { data: unpackResult, elapsed }
       }
       return unpackResult
-    } catch (e: any) {
-      debug(e)
-      let message = e.message
-      if (callsite) {
-        const { stack } = printStack({
-          callsite,
-          originalMethod: clientMethod,
-          onUs: e.isPanic,
-          showColors,
-        })
-        message = `${stack}\n  ${e.message}`
-      }
-
-      message = this.sanitizeMessage(message)
-      // TODO: Do request with callsite instead, so we don't need to rethrow
-      if (e.code) {
-        throw new PrismaClientKnownRequestError(message, e.code, this.client._clientVersion, e.meta)
-      } else if (e.isPanic) {
-        throw new PrismaClientRustPanicError(message, this.client._clientVersion)
-      } else if (e instanceof PrismaClientUnknownRequestError) {
-        throw new PrismaClientUnknownRequestError(message, this.client._clientVersion)
-      } else if (e instanceof PrismaClientInitializationError) {
-        throw new PrismaClientInitializationError(message, this.client._clientVersion)
-      } else if (e instanceof PrismaClientRustPanicError) {
-        throw new PrismaClientRustPanicError(message, this.client._clientVersion)
-      }
-
-      e.clientVersion = this.client._clientVersion
-
-      throw e
+    } catch (error) {
+      this.handleRequestError({ error, clientMethod, callsite })
     }
+  }
+
+  handleRequestError({ error, clientMethod, callsite }: HandleErrorParams): never {
+    debug(error)
+
+    let message = error.message
+    if (callsite) {
+      const { stack } = printStack({
+        callsite,
+        originalMethod: clientMethod,
+        onUs: error.isPanic,
+        showColors: this.client._errorFormat === 'pretty',
+      })
+      message = `${stack}\n  ${error.message}`
+    }
+
+    message = this.sanitizeMessage(message)
+    // TODO: Do request with callsite instead, so we don't need to rethrow
+    if (error.code) {
+      throw new PrismaClientKnownRequestError(message, error.code, this.client._clientVersion, error.meta)
+    } else if (error.isPanic) {
+      throw new PrismaClientRustPanicError(message, this.client._clientVersion)
+    } else if (error instanceof PrismaClientUnknownRequestError) {
+      throw new PrismaClientUnknownRequestError(message, this.client._clientVersion)
+    } else if (error instanceof PrismaClientInitializationError) {
+      throw new PrismaClientInitializationError(message, this.client._clientVersion)
+    } else if (error instanceof PrismaClientRustPanicError) {
+      throw new PrismaClientRustPanicError(message, this.client._clientVersion)
+    }
+
+    error.clientVersion = this.client._clientVersion
+
+    throw error
   }
 
   sanitizeMessage(message) {

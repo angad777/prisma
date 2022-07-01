@@ -1,6 +1,6 @@
 import type { GeneratorConfig } from '@prisma/generator-helper'
 import type { Platform } from '@prisma/get-platform'
-import { getClientEngineType, getEnvPaths } from '@prisma/sdk'
+import { getClientEngineType, getEnvPaths } from '@prisma/internals'
 import indent from 'indent-string'
 import { klona } from 'klona'
 import path from 'path'
@@ -11,8 +11,8 @@ import type { GetPrismaClientConfig } from '../../runtime/getPrismaClient'
 import type { InternalDatasource } from '../../runtime/utils/printDatasources'
 import { buildDirname } from '../utils/buildDirname'
 import { buildDMMF } from '../utils/buildDMMF'
+import { buildInjectableEdgeEnv } from '../utils/buildInjectableEdgeEnv'
 import { buildInlineDatasource } from '../utils/buildInlineDatasources'
-import { buildInlineEnv } from '../utils/buildInlineEnv'
 import { buildInlineSchema } from '../utils/buildInlineSchema'
 import { buildNFTAnnotations } from '../utils/buildNFTAnnotations'
 import { buildRequirePath } from '../utils/buildRequirePath'
@@ -22,7 +22,7 @@ import { commonCodeJS, commonCodeTS } from './common'
 import { Count } from './Count'
 import { Enum } from './Enum'
 import type { Generatable } from './Generatable'
-import { escapeJson, ExportCollector } from './helpers'
+import { ExportCollector } from './helpers'
 import { InputType } from './Input'
 import { Model } from './Model'
 import { PrismaClientClass } from './PrismaClient'
@@ -39,31 +39,31 @@ export interface TSClientOptions {
   generator?: GeneratorConfig
   platforms?: Platform[] // TODO: consider making it non-nullable
   sqliteDatasourceOverrides?: DatasourceOverwrite[]
-  schemaDir: string
+  schemaPath: string
   outputDir: string
   activeProvider: string
+  dataProxy: boolean
 }
 
 export class TSClient implements Generatable {
   protected readonly dmmf: DMMFHelper
-  protected readonly dmmfString: string
+
   constructor(protected readonly options: TSClientOptions) {
-    this.dmmfString = escapeJson(JSON.stringify(options.document))
     this.dmmf = new DMMFHelper(klona(options.document))
   }
 
-  public async toJS(): Promise<string> {
+  public async toJS(edge = false): Promise<string> {
     const {
       platforms,
       generator,
       sqliteDatasourceOverrides,
       outputDir,
-      schemaDir,
+      schemaPath,
       runtimeDir,
       runtimeName,
       datasources,
+      dataProxy,
     } = this.options
-    const schemaPath = path.join(schemaDir, 'schema.prisma')
     const envPaths = getEnvPaths(schemaPath, { cwd: outputDir })
 
     const relativeEnvPaths = {
@@ -81,11 +81,12 @@ export class TSClient implements Generatable {
       generator,
       relativeEnvPaths,
       sqliteDatasourceOverrides,
-      relativePath: path.relative(outputDir, schemaDir),
+      relativePath: path.relative(outputDir, path.dirname(schemaPath)),
       clientVersion: this.options.clientVersion,
       engineVersion: this.options.engineVersion,
       datasourceNames: datasources.map((d) => d.name),
       activeProvider: this.options.activeProvider,
+      dataProxy: this.options.dataProxy,
     }
 
     // get relative output dir for it to be preserved even after bundling, or
@@ -93,8 +94,9 @@ export class TSClient implements Generatable {
     const relativeOutdir = path.relative(process.cwd(), outputDir)
 
     const code = `${commonCodeJS({ ...this.options, browser: false })}
-${buildRequirePath(engineType)}
-${buildDirname(engineType, relativeOutdir, runtimeDir)}
+${buildRequirePath(edge)}
+${buildDirname(edge, relativeOutdir, runtimeDir)}
+
 /**
  * Enums
  */
@@ -112,7 +114,7 @@ ${new Enum(
   },
   true,
 ).toJS()}
-${buildDMMF(engineType, this.dmmfString)}
+${buildDMMF(dataProxy, this.options.document)}
 
 /**
  * Create the Client
@@ -120,18 +122,21 @@ ${buildDMMF(engineType, this.dmmfString)}
 const config = ${JSON.stringify(config, null, 2)}
 config.document = dmmf
 config.dirname = dirname
-${buildInlineDatasource(engineType, datasources)}
-${await buildInlineSchema(engineType, schemaPath)}
-${buildInlineEnv(engineType, datasources, envPaths)}
-${buildWarnEnvConflicts(engineType, runtimeDir, runtimeName)}
+${await buildInlineSchema(dataProxy, schemaPath)}
+${buildInlineDatasource(dataProxy, datasources)}
+${buildInjectableEdgeEnv(edge, datasources)}
+${buildWarnEnvConflicts(edge, runtimeDir, runtimeName)}
 const PrismaClient = getPrismaClient(config)
 exports.PrismaClient = PrismaClient
 Object.assign(exports, Prisma)
-${buildNFTAnnotations(engineType, platforms, relativeOutdir)}
+${buildNFTAnnotations(dataProxy, engineType, platforms, relativeOutdir)}
 `
     return code
   }
-  public toTS(): string {
+  public toTS(edge = false): string {
+    // edge exports the same ts definitions as the index
+    if (edge === true) return `export * from './index'`
+
     const prismaClientClass = new PrismaClientClass(
       this.dmmf,
       this.options.datasources,
@@ -139,7 +144,7 @@ ${buildNFTAnnotations(engineType, platforms, relativeOutdir)}
       this.options.browser,
       this.options.generator,
       this.options.sqliteDatasourceOverrides,
-      this.options.schemaDir,
+      path.dirname(this.options.schemaPath),
     )
 
     const collector = new ExportCollector()
@@ -260,7 +265,7 @@ export type BatchPayload = {
 /**
  * DMMF
  */
-export const dmmf: runtime.DMMF.Document;
+export const dmmf: runtime.BaseDMMF
 `,
   2,
 )}}`
