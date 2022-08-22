@@ -8,7 +8,12 @@ import { getJSRuntimeName } from './getJSRuntimeName'
 
 // our implementation handles less
 export type RequestOptions = O.Patch<{ headers?: { [k: string]: string }; body?: string }, RequestInit>
-export type RequestResponse = O.Required<O.Optional<Response>, 'json' | 'url' | 'ok' | 'status'>
+
+type Headers = Record<string, string | string[] | undefined>
+export type RequestResponse = O.Required<
+  O.Optional<O.Patch<{ text: () => string; headers: Headers }, Response>>,
+  'text' | 'json' | 'url' | 'ok' | 'status'
+>
 
 // fetch is global on edge runtime
 declare let fetch: typeof nodeFetch
@@ -70,10 +75,12 @@ function buildOptions(options: RequestOptions): Https.RequestOptions {
  */
 function buildResponse(incomingData: Buffer[], response: IncomingMessage): RequestResponse {
   return {
+    text: () => Buffer.concat(incomingData).toString(),
     json: () => JSON.parse(Buffer.concat(incomingData).toString()),
     ok: response.statusCode! >= 200 && response.statusCode! <= 299,
     status: response.statusCode!,
     url: response.url!,
+    headers: response.headers,
   }
 }
 

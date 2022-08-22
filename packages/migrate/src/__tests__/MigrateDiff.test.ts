@@ -133,18 +133,18 @@ describe('migrate diff', () => {
       await expect(result).resolves.toMatchInlineSnapshot(``)
       expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                                                                                                                [+] Added tables
-                                                                                                                  - Post
-                                                                                                                  - Profile
-                                                                                                                  - User
-                                                                                                                  - _Migration
+                                                                                                                        [+] Added tables
+                                                                                                                          - Post
+                                                                                                                          - Profile
+                                                                                                                          - User
+                                                                                                                          - _Migration
 
-                                                                                                                [*] Changed the \`Profile\` table
-                                                                                                                  [+] Added unique index on columns (userId)
+                                                                                                                        [*] Changed the \`Profile\` table
+                                                                                                                          [+] Added unique index on columns (userId)
 
-                                                                                                                [*] Changed the \`User\` table
-                                                                                                                  [+] Added unique index on columns (email)
-                                                                                    `)
+                                                                                                                        [*] Changed the \`User\` table
+                                                                                                                          [+] Added unique index on columns (email)
+                                                                                          `)
     })
     it('should diff --from-empty --to-url=file:dev.db --script', async () => {
       ctx.fixture('introspection/sqlite')
@@ -161,9 +161,9 @@ describe('migrate diff', () => {
       await expect(result).resolves.toMatchInlineSnapshot(``)
       expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                                                                                                                [+] Added tables
-                                                                                                                  - Blog
-                                                                                    `)
+                                                                                                                        [+] Added tables
+                                                                                                                          - Blog
+                                                                                          `)
     })
     it('should diff --from-empty --to-schema-datamodel=./prisma/schema.prisma --script', async () => {
       ctx.fixture('schema-only-sqlite')
@@ -190,9 +190,9 @@ describe('migrate diff', () => {
       await expect(result).resolves.toMatchInlineSnapshot(``)
       expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                                                                                                                [-] Removed tables
-                                                                                                                  - Blog
-                                                                                    `)
+                                                                                                                        [-] Removed tables
+                                                                                                                          - Blog
+                                                                                          `)
     })
     it('should diff --from-schema-datamodel=./prisma/schema.prisma --to-empty --script', async () => {
       ctx.fixture('schema-only-sqlite')
@@ -225,7 +225,9 @@ describe('migrate diff', () => {
       it('should exit with code 2 when diff is not empty without --script', async () => {
         ctx.fixture('schema-only-sqlite')
 
-        const mockExit = jest.spyOn(process, 'exit').mockImplementation()
+        const mockExit = jest.spyOn(process, 'exit').mockImplementation((number) => {
+          throw new Error('process.exit: ' + number)
+        })
 
         const result = MigrateDiff.new().parse([
           '--from-schema-datamodel=./prisma/schema.prisma',
@@ -233,13 +235,13 @@ describe('migrate diff', () => {
           '--exit-code',
         ])
 
-        await expect(result).resolves.toMatchInlineSnapshot(``)
+        await expect(result).rejects.toMatchInlineSnapshot(`process.exit: 2`)
         expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
         expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                                                                      [-] Removed tables
-                                                                        - Blog
-                                                        `)
+                                                                                [-] Removed tables
+                                                                                  - Blog
+                                                                `)
 
         expect(mockExit).toHaveBeenCalledTimes(1)
         expect(mockExit).toHaveBeenCalledWith(2)
@@ -249,7 +251,9 @@ describe('migrate diff', () => {
       it('should exit with code 2 when diff is not empty with --script', async () => {
         ctx.fixture('schema-only-sqlite')
 
-        const mockExit = jest.spyOn(process, 'exit').mockImplementation()
+        const mockExit = jest.spyOn(process, 'exit').mockImplementation((number) => {
+          throw new Error('process.exit: ' + number)
+        })
 
         const result = MigrateDiff.new().parse([
           '--from-schema-datamodel=./prisma/schema.prisma',
@@ -258,7 +262,7 @@ describe('migrate diff', () => {
           '--exit-code',
         ])
 
-        await expect(result).resolves.toMatchInlineSnapshot(``)
+        await expect(result).rejects.toMatchInlineSnapshot(`process.exit: 2`)
         expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
         expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
           -- DropTable
@@ -403,7 +407,7 @@ describe('migrate diff', () => {
       const result = MigrateDiff.new().parse(['--from-url', connectionString, '--to-url=file:dev.db', '--script'])
       await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
               Error in migration engine.
-              Reason: [/some/rust/path:0:0] Missing native type in postgres_renderer::render_column_type()
+              Reason: [/some/rust/path:0:0] called \`Option::unwrap()\` on a \`None\` value
 
               Please create an issue with your \`schema.prisma\` at
               https://github.com/prisma/prisma/issues/new

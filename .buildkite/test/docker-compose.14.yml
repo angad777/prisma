@@ -30,6 +30,7 @@ services:
       # MongoDB
       - TEST_MONGO_URI=mongodb://root:prisma@mongo:27018/tests?authSource=admin
       - TEST_MONGO_URI_MIGRATE=mongodb://root:prisma@mongodb_migrate:27017/tests-migrate?authSource=admin
+      - TEST_MONGO_URI_MIGRATE_EXISTING_DB=mongodb://root:prisma@mongodb_migrate:27017/tests-migrate-existing-db?authSource=admin
       # CockroachDB
       - TEST_COCKROACH_URI=postgresql://prisma@cockroachdb:26257/tests
       - TEST_COCKROACH_URI_MIGRATE=postgresql://prisma@cockroachdb:26257/tests-migrate
@@ -93,7 +94,7 @@ services:
 
   mysql:
     image: mysql:8.0
-    command: --default-authentication-plugin=mysql_native_password
+    command: --default-authentication-plugin=mysql_native_password --lower_case_table_names=1
     restart: always
     environment:
       - MYSQL_ROOT_PASSWORD=root
@@ -104,7 +105,7 @@ services:
 
   mysql_isolated:
     image: mysql:8.0
-    command: --default-authentication-plugin=mysql_native_password
+    command: --default-authentication-plugin=mysql_native_password --lower_case_table_names=1
     restart: always
     environment:
       - MYSQL_ROOT_PASSWORD=root
