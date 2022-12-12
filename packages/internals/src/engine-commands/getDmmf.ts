@@ -14,6 +14,7 @@ import { ErrorArea, isExecaErrorCausedByRustPanic, RustPanic } from '../panic'
 import { addVersionDetailsToErrorMessage } from './errorHelpers'
 import {
   createDebugErrorType,
+  createSchemaValidationError,
   loadNodeAPILibrary,
   preliminaryBinaryPipeline,
   preliminaryNodeAPIPipeline,
@@ -61,8 +62,6 @@ type GetDmmfErrorInit = {
 
 export class GetDmmfError extends Error {
   constructor(params: GetDmmfErrorInit) {
-    const headline = chalk.redBright.bold('Get DMMF: ')
-
     const constructedErrorMessage = match(params)
       .with({ _tag: 'parsed' }, ({ errorCode, message, reason }) => {
         const errorCodeMessage = errorCode ? `Error code: ${errorCode}` : ''
@@ -76,8 +75,10 @@ ${message}`
 ${detailsHeader} ${message}`
       })
       .exhaustive()
+    const errorMessageWithContext = `${constructedErrorMessage}
+[Context: getDmmf]`
 
-    super(addVersionDetailsToErrorMessage(`${headline}${constructedErrorMessage}`))
+    super(addVersionDetailsToErrorMessage(errorMessageWithContext))
   }
 }
 
@@ -159,7 +160,7 @@ async function getDmmfNodeAPI(options: GetDMMFOptions) {
           },
           (e) => ({
             type: 'node-api' as const,
-            reason: 'Error while interacting with query-engine-node-api library',
+            reason: '(query-engine-node-api library)',
             error: e as Error,
             datamodel,
           }),
@@ -205,7 +206,7 @@ async function getDmmfNodeAPI(options: GetDMMFOptions) {
         E.tryCatch(
           () => JSON.parse(errorOutput),
           () => {
-            debug(`Coudln't apply JSON.parse to "${errorOutput}"`)
+            debug(`Couldn't apply JSON.parse to "${errorOutput}"`)
             return new GetDmmfError({ _tag: 'unparsed', message: errorOutput, reason: e.reason })
           },
         ),
@@ -229,7 +230,7 @@ async function getDmmfNodeAPI(options: GetDMMFOptions) {
           return new GetDmmfError({
             _tag: 'parsed',
             message: defaultMessage,
-            reason: `${chalk.redBright.bold('Schema parsing')} - ${e.reason}`,
+            reason: createSchemaValidationError(e.reason),
             errorCode,
           })
         }),
@@ -301,7 +302,7 @@ async function getDmmfBinary(options: GetDMMFOptions): Promise<DMMF.Document> {
         },
         (e) => ({
           type: 'execa' as const,
-          reason: 'Error while interacting with query-engine binary',
+          reason: '(query-engine binary)',
           error: e as execa.ExecaError,
         }),
       )
@@ -405,7 +406,7 @@ async function getDmmfBinary(options: GetDMMFOptions): Promise<DMMF.Document> {
         E.tryCatch(
           () => JSON.parse(errorOutput),
           () => {
-            debug(`Coudln't apply JSON.parse to "${errorOutput}"`)
+            debug(`Couldn't apply JSON.parse to "${errorOutput}"`)
             return new GetDmmfError({ _tag: 'unparsed', message: errorOutput, reason: e.reason })
           },
         ),
@@ -415,7 +416,7 @@ async function getDmmfBinary(options: GetDMMFOptions): Promise<DMMF.Document> {
           return new GetDmmfError({
             _tag: 'parsed',
             message: defaultMessage,
-            reason: `${chalk.redBright.bold('Schema parsing')} - ${e.reason}`,
+            reason: createSchemaValidationError(e.reason),
             errorCode,
           })
         }),

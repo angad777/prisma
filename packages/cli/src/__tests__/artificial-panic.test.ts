@@ -71,13 +71,53 @@ describe('artificial-panic formatter', () => {
     try {
       await command.parse([])
     } catch (e) {
-      expect(e).toMatchInlineSnapshot(`Command failed with exit code 101: prisma-engines-path debug-panic`)
+      expect(e).toMatchInlineSnapshot(`unreachable`)
       expect(isRustPanic(e)).toBe(true)
       expect(e.rustStack).toBeTruthy()
       expect(e.schemaPath.replace(/\\/g, '/')) // replace due to Windows CI
         .toContain('prisma/schema.prisma')
       expect(e).toMatchObject({
         schema: undefined,
+      })
+    }
+  })
+})
+
+describe('artificial-panic get-config', () => {
+  const OLD_ENV = { ...process.env }
+
+  afterEach(() => {
+    process.env = { ...OLD_ENV }
+  })
+
+  it('get-config', async () => {
+    ctx.fixture('artificial-panic')
+    expect.assertions(5)
+    process.env.FORCE_PANIC_QUERY_ENGINE_GET_CONFIG = '1'
+
+    const command = new Validate()
+    try {
+      await command.parse([])
+    } catch (e) {
+      expect(e).toMatchInlineSnapshot(`unreachable`)
+      expect(isRustPanic(e)).toBe(true)
+      expect(e.rustStack).toBeTruthy()
+      expect(e.schema).toMatchInlineSnapshot(`
+        // This is your Prisma schema file,
+        // learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+        generator client {
+          provider = "prisma-client-js"
+        }
+
+        datasource db {
+          provider = "postgresql"
+          url      = env("DATABASE_URL")
+        }
+
+      `)
+      expect(e).toMatchObject({
+        schemaPath: undefined,
       })
     }
   })
@@ -90,7 +130,7 @@ describeIf(process.env.PRISMA_CLI_QUERY_ENGINE_TYPE == 'library')('artificial-pa
     process.env = { ...OLD_ENV }
   })
 
-  it('query-engine get-dmmf library', async () => {
+  it('query-engine get-dmmf library - validate', async () => {
     ctx.fixture('artificial-panic')
     expect.assertions(5)
     process.env.FORCE_PANIC_QUERY_ENGINE_GET_DMMF = '1'
@@ -122,21 +162,34 @@ describeIf(process.env.PRISMA_CLI_QUERY_ENGINE_TYPE == 'library')('artificial-pa
     }
   })
 
-  it('query-engine get-config library', async () => {
+  it('query-engine get-dmmf library - format', async () => {
     ctx.fixture('artificial-panic')
-    expect.assertions(4)
-    process.env.FORCE_PANIC_QUERY_ENGINE_GET_CONFIG = '1'
+    expect.assertions(5)
+    process.env.FORCE_PANIC_QUERY_ENGINE_GET_DMMF = '1'
 
-    const command = new Validate()
+    const command = new Format()
     try {
       await command.parse([])
     } catch (e) {
-      expect(e).toMatchInlineSnapshot(`FORCE_PANIC_QUERY_ENGINE_GET_CONFIG`)
+      expect(e).toMatchInlineSnapshot(`FORCE_PANIC_QUERY_ENGINE_GET_DMMF`)
       expect(isRustPanic(e)).toBe(true)
       expect(e.rustStack).toBeTruthy()
+      expect(e.schema).toMatchInlineSnapshot(`
+        // This is your Prisma schema file,
+        // learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+        generator client {
+          provider = "prisma-client-js"
+        }
+
+        datasource db {
+          provider = "postgresql"
+          url      = env("DATABASE_URL")
+        }
+
+      `)
       expect(e).toMatchObject({
         schemaPath: undefined,
-        schema: undefined,
       })
     }
   })
@@ -149,7 +202,7 @@ describeIf(process.env.PRISMA_CLI_QUERY_ENGINE_TYPE == 'binary')('artificial-pan
     process.env = { ...OLD_ENV }
   })
 
-  it('query-engine get-dmmf binary', async () => {
+  it('query-engine get-dmmf binary - validate', async () => {
     ctx.fixture('artificial-panic')
     expect.assertions(5)
     process.env.FORCE_PANIC_QUERY_ENGINE_GET_DMMF = '1'
@@ -170,17 +223,17 @@ describeIf(process.env.PRISMA_CLI_QUERY_ENGINE_TYPE == 'binary')('artificial-pan
     }
   })
 
-  it('query-engine get-config binary', async () => {
+  it('query-engine get-dmmf binary - format', async () => {
     ctx.fixture('artificial-panic')
     expect.assertions(5)
-    process.env.FORCE_PANIC_QUERY_ENGINE_GET_CONFIG = '1'
+    process.env.FORCE_PANIC_QUERY_ENGINE_GET_DMMF = '1'
 
-    const command = new Validate()
+    const command = new Format()
     try {
       await command.parse([])
     } catch (e) {
       expect(e).toMatchInlineSnapshot(
-        `Command failed with exit code 101: prisma-engines-path FORCE_PANIC_QUERY_ENGINE_GET_CONFIG`,
+        `Command failed with exit code 101: prisma-engines-path FORCE_PANIC_QUERY_ENGINE_GET_DMMF`,
       )
       expect(isRustPanic(e)).toBe(true)
       expect(e.rustStack).toBeTruthy()

@@ -1,6 +1,7 @@
 import { blog } from '../fixtures/blog'
 import { getDMMF } from '../generation/getDMMF'
 import { DMMFClass, makeDocument } from '../runtime'
+import { MergedExtensionsList } from '../runtime/core/extensions/MergedExtensionsList'
 import { RequestHandler } from '../runtime/RequestHandler'
 
 describe('batching', () => {
@@ -15,7 +16,7 @@ describe('batching', () => {
         // @ts-expect-error
         requestBatch: (batch) => {
           batches.push(batch)
-          return Promise.resolve(batch.map(() => ({ data: { data: null }, elapsed: 0.2 })))
+          return Promise.resolve(batch.queries.map(() => ({ data: { data: null }, elapsed: 0.2 })))
         },
         // @ts-expect-error
         request: (request) => {
@@ -38,6 +39,7 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniqueUser',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
@@ -47,6 +49,7 @@ describe('batching', () => {
             id: '1',
           },
         },
+        extensions: MergedExtensionsList.empty(),
       }),
       fetcher.request({
         clientMethod: 'findUnique',
@@ -60,6 +63,7 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniqueUser',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
@@ -69,13 +73,19 @@ describe('batching', () => {
             id: '2',
           },
         },
+        extensions: MergedExtensionsList.empty(),
       }),
     ])
 
     expect(batches).toMatchInlineSnapshot(`
-      Array [
-        Array [
-          query {
+      [
+        {
+          containsWrite: false,
+          headers: {
+            traceparent: 00-10-10-00,
+          },
+          queries: [
+            query {
         findUniqueUser(where: {
           id: "1"
         }) {
@@ -94,7 +104,7 @@ describe('batching', () => {
           coinflips
         }
       },
-          query {
+            query {
         findUniqueUser(where: {
           id: "2"
         }) {
@@ -113,10 +123,12 @@ describe('batching', () => {
           coinflips
         }
       },
-        ],
+          ],
+          transaction: undefined,
+        },
       ]
     `)
-    expect(requests).toMatchInlineSnapshot(`Array []`)
+    expect(requests).toMatchInlineSnapshot(`[]`)
   })
 
   test('dont batch different models', async () => {
@@ -130,7 +142,7 @@ describe('batching', () => {
         // @ts-expect-error
         requestBatch: (batch) => {
           batches.push(batch)
-          return Promise.resolve(batch.map(() => ({ data: { data: null }, elapsed: 0.2 })))
+          return Promise.resolve(batch.queries.map(() => ({ data: { data: null }, elapsed: 0.2 })))
         },
         // @ts-expect-error
         request: (request) => {
@@ -153,6 +165,7 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniquePost',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
@@ -160,6 +173,7 @@ describe('batching', () => {
         args: {
           where: { id: '1' },
         },
+        extensions: MergedExtensionsList.empty(),
       }),
       fetcher.request({
         clientMethod: 'findUnique',
@@ -173,6 +187,7 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniqueUser',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
@@ -180,13 +195,19 @@ describe('batching', () => {
         args: {
           where: { id: '2' },
         },
+        extensions: MergedExtensionsList.empty(),
       }),
     ])
 
-    expect(batches).toMatchInlineSnapshot(`Array []`)
+    expect(batches).toMatchInlineSnapshot(`[]`)
     expect(requests).toMatchInlineSnapshot(`
-      Array [
-        query {
+      [
+        {
+          headers: {
+            traceparent: 00-10-10-00,
+          },
+          isWrite: false,
+          query: query {
         findUniquePost(where: {
           id: "1"
         }) {
@@ -200,7 +221,14 @@ describe('batching', () => {
           optional
         }
       },
-        query {
+          transaction: undefined,
+        },
+        {
+          headers: {
+            traceparent: 00-10-10-00,
+          },
+          isWrite: false,
+          query: query {
         findUniqueUser(where: {
           id: "2"
         }) {
@@ -219,6 +247,8 @@ describe('batching', () => {
           coinflips
         }
       },
+          transaction: undefined,
+        },
       ]
     `)
   })
@@ -234,7 +264,7 @@ describe('batching', () => {
         // @ts-expect-error
         requestBatch: (batch) => {
           batches.push(batch)
-          return Promise.resolve(batch.map(() => ({ data: { data: null }, elapsed: 0.2 })))
+          return Promise.resolve(batch.queries.map(() => ({ data: { data: null }, elapsed: 0.2 })))
         },
         // @ts-expect-error
         request: (request) => {
@@ -257,11 +287,13 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniqueUser',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
         typeName: 'User',
         args: { where: { email: 'a@a.de' } },
+        extensions: MergedExtensionsList.empty(),
       }),
       fetcher.request({
         clientMethod: 'findUnique',
@@ -275,18 +307,25 @@ describe('batching', () => {
           },
           rootTypeName: 'query',
           rootField: 'findUniqueUser',
+          extensions: MergedExtensionsList.empty(),
         }),
         isList: false,
         rootField: 'query',
         typeName: 'User',
         args: { where: { id: '2' } },
+        extensions: MergedExtensionsList.empty(),
       }),
     ])
 
-    expect(batches).toMatchInlineSnapshot(`Array []`)
+    expect(batches).toMatchInlineSnapshot(`[]`)
     expect(requests).toMatchInlineSnapshot(`
-      Array [
-        query {
+      [
+        {
+          headers: {
+            traceparent: 00-10-10-00,
+          },
+          isWrite: false,
+          query: query {
         findUniqueUser(where: {
           email: "a@a.de"
         }) {
@@ -305,7 +344,14 @@ describe('batching', () => {
           coinflips
         }
       },
-        query {
+          transaction: undefined,
+        },
+        {
+          headers: {
+            traceparent: 00-10-10-00,
+          },
+          isWrite: false,
+          query: query {
         findUniqueUser(where: {
           id: "2"
         }) {
@@ -324,6 +370,8 @@ describe('batching', () => {
           coinflips
         }
       },
+          transaction: undefined,
+        },
       ]
     `)
   })

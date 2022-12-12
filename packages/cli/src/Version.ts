@@ -97,7 +97,7 @@ export class Version implements Command {
       ['Current platform', platform],
 
       ...enginesRows,
-      ['Format Wasm', `@prisma/prisma-fmt-wasm ${wasm.prismaFmt.version()}`],
+      ['Format Wasm', `@prisma/prisma-fmt-wasm ${wasm.prismaFmtVersion}`],
 
       ['Default Engines Hash', enginesVersion],
       ['Studio', packageJson.devDependencies['@prisma/studio-server']],
@@ -131,6 +131,7 @@ export class Version implements Command {
       const datamodel = await getSchema()
       const config = await getConfig({
         datamodel,
+        ignoreEnvVarErrors: false,
       })
       const generator = config.generators.find((g) => g.previewFeatures.length > 0)
       if (generator) {

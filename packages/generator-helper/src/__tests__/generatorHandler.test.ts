@@ -72,29 +72,33 @@ describe('generatorHandler', () => {
   })
 
   // TODO: Windows: this test fails with ENOENT even though the .cmd file is there and can be run manually.
-  testIf(process.platform !== 'win32')('parsing error', async () => {
-    const generator = new GeneratorProcess(getExecutable('invalid-executable'))
-    await expect(() => generator.init()).rejects.toThrow('Cannot find module')
-  })
+  testIf(process.platform !== 'win32')(
+    'parsing error',
+    async () => {
+      const generator = new GeneratorProcess(getExecutable('invalid-executable'), { initWaitTime: 5000 })
+      await expect(() => generator.init()).rejects.toThrow('Cannot find module')
+    },
+    10_000,
+  )
 
   test('minimal-executable', async () => {
     const generator = new GeneratorProcess(getExecutable('minimal-executable'))
     await generator.init()
     const manifest = await generator.getManifest(stubOptions.generator)
     expect(manifest).toMatchInlineSnapshot(`
-      Object {
+      {
         "defaultOutput": "default-output",
-        "denylists": Object {
-          "models": Array [
+        "denylists": {
+          "models": [
             "SomeForbiddenModel",
           ],
         },
-        "prettyName": "This is a pretty pretty name",
-        "requiresEngines": Array [
+        "prettyName": "This is a pretty name",
+        "requiresEngines": [
           "introspection-engine",
           "query-engine",
         ],
-        "requiresGenerators": Array [
+        "requiresGenerators": [
           "prisma-client-js",
         ],
       }
@@ -112,7 +116,7 @@ describe('generatorHandler', () => {
     generator.stop()
   })
 
-  test('non existent executable', async () => {
+  test('nonexistent executable', async () => {
     const generator = new GeneratorProcess(getExecutable('random path that doesnt exist'))
     await expect(() => generator.init()).rejects.toThrow()
   })

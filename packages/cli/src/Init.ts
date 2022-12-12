@@ -107,7 +107,7 @@ export class Init implements Command {
   ${chalk.bold('Options')}
     
              -h, --help   Display this help message
-  --datasource-provider   Define the datasource provider to use: PostgreSQL, MySQL, SQLite, SQL Server or MongoDB
+  --datasource-provider   Define the datasource provider to use: postgresql, mysql, sqlite, sqlserver, mongodb or cockroachdb
                   --url   Define a custom datasource url
 
   ${chalk.bold('Examples')}
@@ -308,7 +308,7 @@ export class Init implements Command {
     return `
 ✔ Your Prisma schema was created at ${chalk.green('prisma/schema.prisma')}
   You can now open it in your favorite editor.
-${warnings.length > 0 && logger.should.warn ? `\n${warnings.join('\n')}\n` : ''}
+${warnings.length > 0 && logger.should.warn() ? `\n${warnings.join('\n')}\n` : ''}
 Next steps:
 ${steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 

@@ -1,5 +1,8 @@
 import type { DataSource, GeneratorConfig } from '@prisma/generator-helper'
 
+import { RequestError } from '../errors/types/RequestError'
+import * as Transaction from './Transaction'
+
 // Events
 export type QueryEngineEvent = QueryEngineLogEvent | QueryEngineQueryEvent | QueryEnginePanicEvent | EngineSpanEvent
 
@@ -41,8 +44,8 @@ export type EngineSpan = {
   trace_id: string
   span_id: string
   parent_span_id: string
-  start_time: string
-  end_time: string
+  start_time: [number, number]
+  end_time: [number, number]
   attributes?: Record<string, string>
   links?: { trace_id: string; span_id: string }[]
 }
@@ -77,6 +80,15 @@ export type QueryEngineResult<T> = {
   elapsed: number
 }
 
+export type QueryEngineResultBatchQueryResult<T> =
+  | {
+      data: T
+      elapsed: number
+    }
+  | {
+      errors: RequestError[]
+    }
+
 export type QueryEngineRequestHeaders = {
   traceparent?: string
   transactionId?: string
@@ -86,6 +98,7 @@ export type QueryEngineRequestHeaders = {
 export type QueryEngineBatchRequest = {
   batch: QueryEngineRequest[]
   transaction: boolean
+  isolationLevel?: Transaction.IsolationLevel
 }
 
 export type GetConfigOptions = {

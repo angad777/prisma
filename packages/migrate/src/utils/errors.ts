@@ -25,15 +25,6 @@ ${link('https://pris.ly/d/migrate-upgrade')}`,
   }
 }
 
-export class HowToBaselineError extends Error {
-  constructor() {
-    super(
-      `Read more about how to baseline an existing production database:
-${link('https://pris.ly/d/migrate-baseline')}`,
-    )
-  }
-}
-
 export class DbPushForceFlagRenamedError extends Error {
   constructor() {
     super(
@@ -57,7 +48,7 @@ export class DbPushIgnoreWarningsWithFlagError extends Error {
 export class MigrateNeedsForceError extends Error {
   constructor(subcommand: string) {
     super(
-      `Use the --force flag to use the ${subcommand} command in an unnattended environment like ${chalk.bold.greenBright(
+      `Use the --force flag to use the ${subcommand} command in an unattended environment like ${chalk.bold.greenBright(
         getCommandWithExecutor(`prisma migrate ${subcommand} --force`),
       )}`,
     )
@@ -90,7 +81,7 @@ See ${link('https://www.prisma.io/docs/reference/api-reference/command-reference
 export class DbNeedsForceError extends Error {
   constructor(subcommand: string) {
     super(
-      `Use the --force flag to use the ${subcommand} command in an unnattended environment like ${chalk.bold.greenBright(
+      `Use the --force flag to use the ${subcommand} command in an unattended environment like ${chalk.bold.greenBright(
         getCommandWithExecutor(`prisma db ${subcommand} --force --preview-feature`),
       )}`,
     )

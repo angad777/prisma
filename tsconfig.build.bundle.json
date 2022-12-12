@@ -4,6 +4,7 @@
   "compilerOptions": {
     "paths": {
       "@prisma/client": ["./packages/client/src"],
+      "@prisma/client/runtime": ["./packages/client/runtime"],
       "@prisma/internals": ["./packages/internals/src"],
       "@prisma/internals/dist/*": ["./packages/internals/src/*"],
       "@prisma/migrate": ["./packages/migrate/src"],
@@ -14,7 +15,8 @@
       "prisma": ["./packages/cli/src"],
       "@prisma/get-platform": ["./packages/get-platform/src"],
       "@prisma/fetch-engine": ["./packages/fetch-engine/src"],
-      "@prisma/engines": ["./packages/engines/src"]
+      "@prisma/engines": ["./packages/engines/src"],
+      "@prisma/instrumentation": ["./packages/instrumentation/src"]
     }
   }
 }

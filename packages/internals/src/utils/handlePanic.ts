@@ -3,8 +3,8 @@ import prompt from 'prompts'
 
 import type { RustPanic } from '../panic'
 import { sendPanic } from '../sendPanic'
-import { wouldYouLikeToCreateANewIssue } from './getGithubIssueUrl'
-import { isCi } from './isCi'
+import { canPrompt } from './canPrompt'
+import { wouldYouLikeToCreateANewIssue } from './getGitHubIssueUrl'
 import { link } from './link'
 
 export async function handlePanic(
@@ -13,7 +13,7 @@ export async function handlePanic(
   engineVersion: string,
   command: string,
 ): Promise<void> {
-  if (isCi() && Boolean((prompt as any)._injected?.length) === false) {
+  if (!canPrompt()) {
     throw error
   }
 
@@ -28,7 +28,7 @@ async function panicDialog(
 ): Promise<void> {
   const errorMessage = error.message.split('\n').slice(0, Math.max(20, process.stdout.rows)).join('\n')
 
-  console.log(`${chalk.red('Oops, an unexpected error occured!')}
+  console.log(`${chalk.red('Oops, an unexpected error occurred!')}
 ${chalk.red(errorMessage)}
 
 ${chalk.bold('Please help us improve Prisma by submitting an error report.')}
@@ -75,4 +75,7 @@ ${chalk.dim(`Learn more: ${link('https://pris.ly/d/telemetry')}`)}
     engineVersion,
     command,
   })
+
+  // Signal that there was an error
+  process.exit(1)
 }

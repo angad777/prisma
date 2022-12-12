@@ -1,15 +1,20 @@
 import { assertNever } from '@prisma/internals'
+import * as miniProxy from '@prisma/mini-proxy'
 import cuid from 'cuid'
 import fs from 'fs-extra'
 import path from 'path'
+import { match } from 'ts-pattern'
 import { Script } from 'vm'
 
 import { DbDrop } from '../../../../migrate/src/commands/DbDrop'
+import { DbExecute } from '../../../../migrate/src/commands/DbExecute'
 import { DbPush } from '../../../../migrate/src/commands/DbPush'
 import type { NamedTestSuiteConfig } from './getTestSuiteInfo'
 import { getTestSuiteFolderPath, getTestSuiteSchemaPath } from './getTestSuiteInfo'
 import { Providers } from './providers'
+import { ProviderFlavor, ProviderFlavors } from './relationMode/ProviderFlavor'
 import type { TestSuiteMeta } from './setupTestSuiteMatrix'
+import { AlterStatementCallback, ClientMeta } from './types'
 
 const DB_NAME_VAR = 'PRISMA_DB_NAME'
 
@@ -49,7 +54,8 @@ async function copyPreprocessed(from: string, to: string, suiteConfig: Record<st
   const newContents = contents
     .replace(/'..\//g, "'../../../")
     .replace(/'.\//g, "'../../")
-    .replace(/\/\/\s*@ts-ignore.+/g, '')
+    .replace(/'..\/..\/node_modules/g, "'./node_modules")
+    .replace(/\/\/\s*@ts-ignore.*/g, '')
     .replace(/\/\/\s*@ts-test-if:(.+)/g, (match, condition) => {
       if (!evaluateMagicComment(condition, suiteConfig)) {
         return '// @ts-expect-error'
@@ -103,12 +109,44 @@ export async function setupTestSuiteDatabase(
   suiteMeta: TestSuiteMeta,
   suiteConfig: NamedTestSuiteConfig,
   errors: Error[] = [],
+  alterStatementCallback?: AlterStatementCallback,
 ) {
   const schemaPath = getTestSuiteSchemaPath(suiteMeta, suiteConfig)
 
   try {
     const consoleInfoMock = jest.spyOn(console, 'info').mockImplementation()
-    await DbPush.new().parse(['--schema', schemaPath, '--force-reset', '--skip-generate'])
+    const dbpushParams = ['--schema', schemaPath, '--skip-generate']
+    const providerFlavor = suiteConfig['providerFlavor'] as ProviderFlavor | undefined
+    // `--force-reset` is great but only using it where necessary makes the tests faster
+    // Since we have full isolation of tests / database,
+    // we do not need to force reset
+    // But we currently break isolation for Vitess (for faster tests),
+    // so it's good to force reset in this case
+    if (providerFlavor === ProviderFlavors.VITESS_8) {
+      dbpushParams.push('--force-reset')
+    }
+    await DbPush.new().parse(dbpushParams)
+
+    if (alterStatementCallback) {
+      const prismaDir = path.dirname(schemaPath)
+      const timestamp = new Date().getTime()
+      const provider = suiteConfig.matrixOptions['provider'] as Providers
+
+      await fs.promises.mkdir(`${prismaDir}/migrations/${timestamp}`, { recursive: true })
+      await fs.promises.writeFile(`${prismaDir}/migrations/migration_lock.toml`, `provider = "${provider}"`)
+      await fs.promises.writeFile(
+        `${prismaDir}/migrations/${timestamp}/migration.sql`,
+        alterStatementCallback(provider),
+      )
+
+      await DbExecute.new().parse([
+        '--file',
+        `${prismaDir}/migrations/${timestamp}/migration.sql`,
+        '--schema',
+        `${schemaPath}`,
+      ])
+    }
+
     consoleInfoMock.mockRestore()
   } catch (e) {
     errors.push(e as Error)
@@ -148,19 +186,63 @@ export async function dropTestSuiteDatabase(
   }
 }
 
+export type DatasourceInfo = {
+  envVarName: string
+  databaseUrl: string
+  dataProxyUrl?: string
+}
+
 /**
- * Generate a random string to be used as a test suite db url.
+ * Generate a random string to be used as a test suite db name, and derive the
+ * corresponding database URL and, if required, Mini-Proxy connection string to
+ * that database.
+ *
  * @param suiteConfig
+ * @param clientMeta
  * @returns
  */
-export function setupTestSuiteDbURI(suiteConfig: Record<string, string>) {
+export function setupTestSuiteDbURI(suiteConfig: Record<string, string>, clientMeta: ClientMeta): DatasourceInfo {
   const provider = suiteConfig['provider'] as Providers
-  // we reuse the original db url but postfix it with a random string
+  const providerFlavor = suiteConfig['providerFlavor'] as ProviderFlavor | undefined
   const dbId = cuid()
-  const envVarName = `DATABASE_URI_${provider}`
-  const newURI = getDbUrl(provider).replace(DB_NAME_VAR, dbId)
 
-  return { [envVarName]: newURI }
+  const { envVarName, newURI } = match(providerFlavor)
+    .with(undefined, () => {
+      const envVarName = `DATABASE_URI_${provider}`
+      const newURI = getDbUrl(provider)
+      return { envVarName, newURI }
+    })
+    .otherwise(() => {
+      const envVarName = `DATABASE_URI_${providerFlavor!}`
+      const newURI = getDbUrlFromFlavor(providerFlavor, provider)
+      return { envVarName, newURI }
+    })
+
+  let databaseUrl = newURI
+  // Vitess takes about 1 minute to create a database the first time
+  // So we can reuse the same database for all tests
+  // It has a significant impact on the test runtime
+  // Example: 60s -> 3s
+  if (providerFlavor === ProviderFlavors.VITESS_8) {
+    databaseUrl = databaseUrl.replace(DB_NAME_VAR, 'test-vitess-80')
+  } else {
+    databaseUrl = databaseUrl.replace(DB_NAME_VAR, dbId)
+  }
+  let dataProxyUrl: string | undefined
+
+  if (clientMeta.dataProxy) {
+    dataProxyUrl = miniProxy.generateConnectionString({
+      databaseUrl,
+      envVar: envVarName,
+      port: miniProxy.defaultServerConfig.port,
+    })
+  }
+
+  return {
+    envVarName,
+    databaseUrl,
+    dataProxyUrl,
+  }
 }
 
 /**
@@ -185,6 +267,18 @@ function getDbUrl(provider: Providers): string {
     default:
       assertNever(provider, `No URL for provider ${provider} configured`)
   }
+}
+
+/**
+ * Returns configured database URL for specified provider flavor, falling back to
+ * `getDbUrl(provider)` if no flavor-specific URL is configured.
+ * @param providerFlavor provider variant, e.g. `vitess` for `mysql`
+ * @param provider provider supported by Prisma, e.g. `mysql`
+ */
+function getDbUrlFromFlavor(providerFlavor: ProviderFlavor | undefined, provider: Providers): string {
+  return match(providerFlavor)
+    .with(ProviderFlavors.VITESS_8, () => requireEnvVariable('TEST_FUNCTIONAL_VITESS_8_URI'))
+    .otherwise(() => getDbUrl(provider))
 }
 
 /**

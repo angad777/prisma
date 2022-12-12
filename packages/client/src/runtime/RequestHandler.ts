@@ -1,6 +1,6 @@
-import { Context, trace } from '@opentelemetry/api'
+import { Context } from '@opentelemetry/api'
 import Debug from '@prisma/debug'
-import { getTraceParent } from '@prisma/engine-core'
+import { EventEmitter, getTraceParent, hasBatchIndex, TracingConfig } from '@prisma/engine-core'
 import stripAnsi from 'strip-ansi'
 
 import {
@@ -9,14 +9,20 @@ import {
   PrismaClientRustPanicError,
   PrismaClientUnknownRequestError,
 } from '.'
+import { Args as ExtensionArgs } from './core/extensions/$extends'
+import { applyResultExtensions } from './core/extensions/applyResultExtensions'
+import { MergedExtensionsList } from './core/extensions/MergedExtensionsList'
+import { IncludeSelect, visitQueryResult } from './core/extensions/visitQueryResult'
+import { dmmfToJSModelName } from './core/model/utils/dmmfToJSModelName'
+import { PrismaPromiseTransaction } from './core/request/PrismaPromise'
 import { DataLoader } from './DataLoader'
-import type { Client, Unpacker } from './getPrismaClient'
+import type { Client, LogEvent, Unpacker } from './getPrismaClient'
 import type { EngineMiddleware } from './MiddlewareHandler'
 import type { Document } from './query'
 import { Args, unpack } from './query'
-import { printStack } from './utils/printStack'
-import type { RejectOnNotFound } from './utils/rejectOnNotFound'
-import { throwIfNotFound } from './utils/rejectOnNotFound'
+import { CallSite } from './utils/CallSite'
+import { createErrorMessageWithContext } from './utils/createErrorMessageWithContext'
+import { NotFoundError, RejectOnNotFound, throwIfNotFound } from './utils/rejectOnNotFound'
 
 const debug = Debug('prisma:client:request_handler')
 
@@ -27,13 +33,13 @@ export type RequestParams = {
   typeName: string
   isList: boolean
   clientMethod: string
-  callsite?: string
+  callsite?: CallSite
   rejectOnNotFound?: RejectOnNotFound
-  runInTransaction?: boolean
+  transaction?: PrismaPromiseTransaction
   engineHook?: EngineMiddleware
-  args: any
+  extensions: MergedExtensionsList
+  args?: any
   headers?: Record<string, string>
-  transactionId?: string | number
   unpacker?: Unpacker
   otelParentCtx?: Context
   otelChildCtx?: Context
@@ -42,64 +48,91 @@ export type RequestParams = {
 export type HandleErrorParams = {
   error: any
   clientMethod: string
-  callsite?: string
+  callsite?: CallSite
+  transaction?: PrismaPromiseTransaction
 }
 
 export type Request = {
   document: Document
-  runInTransaction?: boolean
-  transactionId?: string | number
+  transaction?: PrismaPromiseTransaction
   headers?: Record<string, string>
   otelParentCtx?: Context
   otelChildCtx?: Context
+  tracingConfig?: TracingConfig
+}
+
+type ApplyExtensionsParams = {
+  result: object
+  modelName: string
+  args: IncludeSelect
+  extensions: MergedExtensionsList
 }
 
 function getRequestInfo(request: Request) {
-  const txId = request.transactionId
-  const inTx = request.runInTransaction
+  const transaction = request.transaction
   const headers = request.headers ?? {}
-  const traceparent = getTraceParent()
+  const traceparent = getTraceParent({ tracingConfig: request.tracingConfig })
 
-  // if the tx has a number for an id, then it's a regular batch tx
-  const _inTx = typeof txId === 'number' && inTx ? true : undefined
-  // if the tx has a string for id, it's an interactive transaction
-  const _txId = typeof txId === 'string' && inTx ? txId : undefined
+  if (transaction?.kind === 'itx') {
+    headers.transactionId = transaction.id
+  }
 
-  if (_txId !== undefined) headers.transactionId = _txId
-  if (traceparent !== undefined) headers.traceparent = traceparent
+  if (traceparent !== undefined) {
+    headers.traceparent = traceparent
+  }
 
-  return { inTx: _inTx, headers }
+  return {
+    transaction,
+    headers,
+  }
 }
 
 export class RequestHandler {
   client: Client
   hooks: any
   dataloader: DataLoader<Request>
+  private logEmmitter?: EventEmitter
 
-  constructor(client: Client, hooks?: any) {
+  constructor(client: Client, hooks?: any, logEmitter?: EventEmitter) {
+    this.logEmmitter = logEmitter
     this.client = client
     this.hooks = hooks
     this.dataloader = new DataLoader({
       batchLoader: (requests) => {
         const info = getRequestInfo(requests[0])
         const queries = requests.map((r) => String(r.document))
-        const traceparent = getTraceParent(requests[0].otelParentCtx)
+        const traceparent = getTraceParent({ context: requests[0].otelParentCtx, tracingConfig: client._tracingConfig })
 
         if (traceparent) info.headers.traceparent = traceparent
         // TODO: pass the child information to QE for it to issue links to queries
         // const links = requests.map((r) => trace.getSpanContext(r.otelChildCtx!))
 
-        return this.client._engine.requestBatch(queries, info.headers, info.inTx)
+        const containsWrite = requests.some((r) => r.document.type === 'mutation')
+
+        const batchTransaction = info.transaction?.kind === 'batch' ? info.transaction : undefined
+
+        return this.client._engine.requestBatch({
+          queries,
+          headers: info.headers,
+          transaction: batchTransaction,
+          containsWrite,
+        })
       },
       singleLoader: (request) => {
         const info = getRequestInfo(request)
         const query = String(request.document)
+        const interactiveTransaction = info.transaction?.kind === 'itx' ? info.transaction : undefined
 
-        return this.client._engine.request(query, info.headers)
+        return this.client._engine.request({
+          query,
+          headers: info.headers,
+          transaction: interactiveTransaction,
+          isWrite: request.document.type === 'mutation',
+        })
       },
       batchBy: (request) => {
-        if (request.transactionId) {
-          return `transaction-${request.transactionId}`
+        if (request.transaction?.id) {
+          return `transaction-${request.transaction.id}`
         }
 
         return batchFindUniqueBy(request)
@@ -116,12 +149,12 @@ export class RequestHandler {
     callsite,
     rejectOnNotFound,
     clientMethod,
-    runInTransaction,
     engineHook,
     args,
     headers,
-    transactionId,
+    transaction,
     unpacker,
+    extensions,
     otelParentCtx,
     otelChildCtx,
   }: RequestParams) {
@@ -147,20 +180,22 @@ export class RequestHandler {
         const result = await engineHook(
           {
             document,
-            runInTransaction,
+            runInTransaction: Boolean(transaction),
           },
-          (params) => this.dataloader.request(params),
+          (params) => {
+            return this.dataloader.request({ ...params, tracingConfig: this.client._tracingConfig })
+          },
         )
         data = result.data
         elapsed = result.elapsed
       } else {
         const result = await this.dataloader.request({
           document,
-          runInTransaction,
           headers,
-          transactionId,
+          transaction,
           otelParentCtx,
           otelChildCtx,
+          tracingConfig: this.client._tracingConfig,
         })
         data = result?.data
         elapsed = result?.elapsed
@@ -171,37 +206,73 @@ export class RequestHandler {
        */
       const unpackResult = this.unpack(document, data, dataPath, rootField, unpacker)
       throwIfNotFound(unpackResult, clientMethod, typeName, rejectOnNotFound)
+      const extendedResult = this.applyResultExtensions({ result: unpackResult, modelName: typeName, args, extensions })
       if (process.env.PRISMA_CLIENT_GET_TIME) {
-        return { data: unpackResult, elapsed }
+        return { data: extendedResult, elapsed }
       }
-      return unpackResult
+      return extendedResult
     } catch (error) {
-      this.handleRequestError({ error, clientMethod, callsite })
+      this.handleAndLogRequestError({ error, clientMethod, callsite, transaction })
     }
   }
 
-  handleRequestError({ error, clientMethod, callsite }: HandleErrorParams): never {
+  /**
+   * Handles the error and logs it, logging the error is done synchronously waiting for the event
+   * handlers to finish.
+   */
+  handleAndLogRequestError({ error, clientMethod, callsite, transaction }: HandleErrorParams): never {
+    try {
+      this.handleRequestError({ error, clientMethod, callsite, transaction })
+    } catch (err) {
+      if (this.logEmmitter) {
+        this.logEmmitter.emit('error', { message: err.message, target: clientMethod, timestamp: new Date() })
+      }
+      throw err
+    }
+  }
+
+  handleRequestError({ error, clientMethod, callsite, transaction }: HandleErrorParams): never {
     debug(error)
+
+    if (isMismatchingBatchIndex(error, transaction)) {
+      // if this is batch error and current request was not it's cause, we don't add
+      // context information to the error: this wasn't a request that caused batch to fail
+      throw error
+    }
+
+    if (error instanceof NotFoundError) {
+      // TODO: This is a workaround to keep backwards compatibility with clients
+      // consuming NotFoundError
+      throw error
+    }
 
     let message = error.message
     if (callsite) {
-      const { stack } = printStack({
+      message = createErrorMessageWithContext({
         callsite,
         originalMethod: clientMethod,
-        onUs: error.isPanic,
+        isPanic: error.isPanic,
         showColors: this.client._errorFormat === 'pretty',
+        message,
       })
-      message = `${stack}\n  ${error.message}`
     }
 
     message = this.sanitizeMessage(message)
     // TODO: Do request with callsite instead, so we don't need to rethrow
     if (error.code) {
-      throw new PrismaClientKnownRequestError(message, error.code, this.client._clientVersion, error.meta)
+      throw new PrismaClientKnownRequestError(message, {
+        code: error.code,
+        clientVersion: this.client._clientVersion,
+        meta: error.meta,
+        batchRequestIdx: error.batchRequestIdx,
+      })
     } else if (error.isPanic) {
       throw new PrismaClientRustPanicError(message, this.client._clientVersion)
     } else if (error instanceof PrismaClientUnknownRequestError) {
-      throw new PrismaClientUnknownRequestError(message, this.client._clientVersion)
+      throw new PrismaClientUnknownRequestError(message, {
+        clientVersion: this.client._clientVersion,
+        batchRequestIdx: error.batchRequestIdx,
+      })
     } else if (error instanceof PrismaClientInitializationError) {
       throw new PrismaClientInitializationError(message, this.client._clientVersion)
     } else if (error instanceof PrismaClientRustPanicError) {
@@ -236,9 +307,33 @@ export class RequestHandler {
     return unpack({ document, data, path: getPath })
   }
 
+  applyResultExtensions({ result, modelName, args, extensions }: ApplyExtensionsParams) {
+    if (extensions.isEmpty() || result == null) {
+      return result
+    }
+    const model = this.client._baseDmmf.getModelMap()[modelName]
+    if (!model) {
+      return result
+    }
+    return visitQueryResult({
+      result,
+      args: args ?? {},
+      model,
+      dmmf: this.client._baseDmmf,
+      visitor(value, model, args) {
+        const modelName = dmmfToJSModelName(model.name)
+        return applyResultExtensions({ result: value, modelName, select: args.select, extensions })
+      },
+    })
+  }
+
   get [Symbol.toStringTag]() {
     return 'RequestHandler'
   }
+}
+
+function isMismatchingBatchIndex(error: any, transaction: PrismaPromiseTransaction | undefined) {
+  return hasBatchIndex(error) && transaction?.kind === 'batch' && error.batchRequestIdx !== transaction.index
 }
 
 /**
@@ -269,7 +364,7 @@ function batchFindUniqueBy(request: Request) {
   // we generate a string for the fields we have used in the `includes`
   const selectionSet = request.document.children[0].children!.join(',')
 
-  // queries that share this token will be batched and collapsed alltogether
+  // queries that share this token will be batched and collapsed altogether
   return `${request.document.children[0].name}|${args}|${selectionSet}`
   // this way, the query engine will be able to collapse into a single call
   // and that is because all the queries share their `where` and `includes`

@@ -3,6 +3,9 @@ import Decimal from 'decimal.js'
 import indent from 'indent-string'
 import stripAnsi from 'strip-ansi'
 
+import { MergedExtensionsList } from './core/extensions/MergedExtensionsList'
+import { applyComputedFieldsToSelection } from './core/extensions/resultUtils'
+import { FieldRefImpl } from './core/model/FieldRef'
 import type { /*dmmf, */ DMMFHelper } from './dmmf'
 import type { DMMF } from './dmmf-types'
 import type {
@@ -14,6 +17,7 @@ import type {
   InvalidFieldError,
 } from './error-types'
 import { ObjectEnumValue } from './object-enums'
+import { CallSite } from './utils/CallSite'
 import {
   getGraphQLType,
   getInputTypeName,
@@ -26,19 +30,22 @@ import {
   unionBy,
   wrapWithList,
 } from './utils/common'
+import { createErrorMessageWithContext } from './utils/createErrorMessageWithContext'
 import { isDecimalJsLike, stringifyDecimalJsLike } from './utils/decimalJsLike'
 import { deepExtend } from './utils/deep-extend'
 import { deepGet } from './utils/deep-set'
 import { filterObject } from './utils/filterObject'
-import { flatMap } from './utils/flatMap'
 import { isObject } from './utils/isObject'
 import { omit } from './utils/omit'
 import type { MissingItem, PrintJsonWithErrorsArgs } from './utils/printJsonErrors'
 import { printJsonWithErrors } from './utils/printJsonErrors'
-import { printStack } from './utils/printStack'
 import stringifyObject from './utils/stringifyObject'
 
 const tab = 2
+
+type MakeDocumentContext = {
+  modelName?: string
+}
 
 export class Document {
   constructor(public readonly type: 'query' | 'mutation', public readonly children: Field[]) {
@@ -170,7 +177,7 @@ ${indent(this.children.map(String).join('\n'), tab)}
       }
     }
 
-    const renderErrorStr = (callsite?: string) => {
+    const renderErrorStr = (callsite?: CallSite) => {
       const hasRequiredMissingArgsErrors = argErrors.some(
         (e) => e.error.type === 'missingArg' && e.error.missingArg.isRequired,
       )
@@ -211,17 +218,6 @@ ${fieldErrors.map((e) => this.printFieldError(e, missingItems, errorFormat === '
         return stripAnsi(errorMessages)
       }
 
-      const {
-        stack,
-        indent: indentValue,
-        afterLines,
-      } = printStack({
-        callsite,
-        originalMethod: originalMethod || queryName,
-        showColors: errorFormat && errorFormat === 'pretty',
-        isValidationError: true,
-      })
-
       let printJsonArgs: PrintJsonWithErrorsArgs = {
         ast: isTopLevelQuery ? { [topLevelQueryName]: select } : select,
         keyPaths,
@@ -235,11 +231,13 @@ ${fieldErrors.map((e) => this.printFieldError(e, missingItems, errorFormat === '
         printJsonArgs = transformAggregatePrintJsonArgs(printJsonArgs)
       }
 
-      const errorStr = `${stack}${indent(printJsonWithErrors(printJsonArgs), indentValue).slice(
-        indentValue,
-      )}${chalk.dim(afterLines)}
-
-${errorMessages}${missingArgsLegend}\n`
+      const errorStr = createErrorMessageWithContext({
+        callsite,
+        originalMethod: originalMethod || queryName,
+        showColors: errorFormat && errorFormat === 'pretty',
+        callArguments: printJsonWithErrors(printJsonArgs),
+        message: `${errorMessages}${missingArgsLegend}\n`,
+      })
 
       if (process.env.NO_COLOR || errorFormat === 'colorless') {
         return stripAnsi(errorStr)
@@ -408,9 +406,12 @@ ${errorMessages}${missingArgsLegend}\n`
 
     if (error.type === 'atLeastOne') {
       const additional = minimal ? '' : ` Available args are listed in ${chalk.dim.green('green')}.`
+      const atLeastFieldsError = error.atLeastFields
+        ? ` and at least one argument for ${error.atLeastFields.map((field) => chalk.bold(field)).join(', or ')}`
+        : ''
       return `Argument ${chalk.bold(path.join('.'))} of type ${chalk.bold(
         error.inputType.name,
-      )} needs ${chalk.greenBright('at least one')} argument.${additional}`
+      )} needs ${chalk.greenBright('at least one')} argument${chalk.bold(atLeastFieldsError)}.${additional}`
     }
 
     if (error.type === 'atMostOne') {
@@ -595,7 +596,7 @@ export class Args {
       return []
     }
 
-    return flatMap(this.args, (arg) => arg.collectErrors())
+    return this.args.flatMap((arg) => arg.collectErrors())
   }
 }
 
@@ -610,6 +611,10 @@ function stringify(value: any, inputType?: DMMF.SchemaArgInputType) {
     return JSON.stringify(value.toString('base64'))
   }
 
+  if (value instanceof FieldRefImpl) {
+    return `{ _ref: ${JSON.stringify(value.name)}}`
+  }
+
   if (Object.prototype.toString.call(value) === '[object BigInt]') {
     return value.toString()
   }
@@ -618,7 +623,7 @@ function stringify(value: any, inputType?: DMMF.SchemaArgInputType) {
     if (value === null) {
       return 'null'
     }
-    if (value && value.values && value.__prismaRawParamaters__) {
+    if (value && value.values && value.__prismaRawParameters__) {
       return JSON.stringify(value.values)
     }
     if (inputType?.isList && Array.isArray(value)) {
@@ -629,7 +634,7 @@ function stringify(value: any, inputType?: DMMF.SchemaArgInputType) {
   }
 
   if (value === undefined) {
-    // TODO: This is a bit weird. can't we unify this with the === null caes?
+    // TODO: This is a bit weird. can't we unify this with the === null case?
     return null
   }
 
@@ -646,6 +651,10 @@ function stringify(value: any, inputType?: DMMF.SchemaArgInputType) {
       return `[${value.join(', ')}]`
     }
     return value
+  }
+
+  if (typeof value === 'number' && inputType?.type === 'Float') {
+    return value.toExponential()
   }
 
   return JSON.stringify(value, null, 2)
@@ -745,8 +754,8 @@ ${indent(value.toString(), 2)}
     }
 
     if (Array.isArray(this.value)) {
-      errors.push(
-        ...(flatMap(this.value as any[], (val, index) => {
+      return errors.concat(
+        (this.value as any[]).flatMap((val, index) => {
           if (!val?.collectErrors) {
             return []
           }
@@ -754,13 +763,13 @@ ${indent(value.toString(), 2)}
           return val.collectErrors().map((e) => {
             return { ...e, path: [this.key, index, ...e.path] }
           })
-        }) as any),
+        }),
       )
     }
 
     // collect errors of children if there are any
     if (this.value instanceof Args) {
-      errors.push(...this.value.collectErrors().map((e) => ({ ...e, path: [this.key, ...e.path] })))
+      return errors.concat(this.value.collectErrors().map((e) => ({ ...e, path: [this.key, ...e.path] })))
     }
 
     return errors
@@ -774,9 +783,18 @@ export interface DocumentInput {
   rootTypeName: 'query' | 'mutation'
   rootField: string
   select?: any
+  modelName?: string
+  extensions: MergedExtensionsList
 }
 
-export function makeDocument({ dmmf, rootTypeName, rootField, select }: DocumentInput): Document {
+export function makeDocument({
+  dmmf,
+  rootTypeName,
+  rootField,
+  select,
+  modelName,
+  extensions,
+}: DocumentInput): Document {
   if (!select) {
     select = {}
   }
@@ -791,7 +809,17 @@ export function makeDocument({ dmmf, rootTypeName, rootField, select }: Document
     },
     name: rootTypeName,
   }
-  const children = selectionToFields(dmmf, { [rootField]: select }, fakeRootField, [rootTypeName])
+  const context = {
+    modelName,
+  }
+  const children = selectionToFields({
+    dmmf,
+    selection: { [rootField]: select },
+    schemaField: fakeRootField,
+    path: [rootTypeName],
+    context,
+    extensions,
+  })
   return new Document(rootTypeName, children) as any
 }
 
@@ -800,15 +828,32 @@ export function transformDocument(document: Document): Document {
   return document
 }
 
-export function selectionToFields(
-  dmmf: DMMFHelper,
-  selection: any,
-  schemaField: DMMF.SchemaField,
-  path: string[],
-): Field[] {
+type SelectionToFieldsArgs = {
+  dmmf: DMMFHelper
+  selection: any
+  schemaField: DMMF.SchemaField
+  path: string[]
+  context: MakeDocumentContext
+  extensions: MergedExtensionsList
+}
+
+export function selectionToFields({
+  dmmf,
+  selection,
+  schemaField,
+  path,
+  context,
+  extensions,
+}: SelectionToFieldsArgs): Field[] {
   const outputType = schemaField.outputType.type as DMMF.OutputType
+  const computedFields = context.modelName ? extensions.getAllComputedFields(context.modelName) : {}
+  selection = applyComputedFieldsToSelection(selection, computedFields)
   return Object.entries(selection).reduce((acc, [name, value]: any) => {
     const field = outputType.fieldMap ? outputType.fieldMap[name] : outputType.fields.find((f) => f.name === name)
+
+    if (computedFields?.[name]) {
+      return acc
+    }
 
     if (!field) {
       // if the field name is incorrect, we ignore the args and child fields altogether
@@ -823,7 +868,7 @@ export function selectionToFields(
             providedName: name,
             didYouMean: getSuggestion(
               name,
-              outputType.fields.map((f) => f.name),
+              outputType.fields.map((f) => f.name).concat(Object.keys(computedFields ?? {})),
             ),
             outputType,
           },
@@ -866,6 +911,7 @@ export function selectionToFields(
       ? objectToArgs(
           argsWithoutIncludeAndSelect,
           transformedField,
+          context,
           [],
           typeof field === 'string' ? undefined : (field.outputType.type as DMMF.OutputType),
         )
@@ -1027,8 +1073,25 @@ export function selectionToFields(
       }
     }
 
-    const children =
-      select !== false && isRelation ? selectionToFields(dmmf, select, field, [...path, name]) : undefined
+    let children: Field[] | undefined
+    if (select !== false && isRelation) {
+      let modelName = context.modelName
+      if (
+        typeof field.outputType.type === 'object' &&
+        field.outputType.namespace === 'model' &&
+        field.outputType.location === 'outputObjectTypes'
+      ) {
+        modelName = field.outputType.type.name
+      }
+      children = selectionToFields({
+        dmmf,
+        selection: select,
+        schemaField: field,
+        path: [...path, name],
+        context: { modelName },
+        extensions,
+      })
+    }
 
     acc.push(new Field({ name, args, children, schemaField: field }))
 
@@ -1085,9 +1148,9 @@ function getInvalidTypeArg(
 }
 
 // TODO: Refactor
-function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.SchemaArgInputType): boolean {
-  const { type, isList } = inputType
-  const expectedType = wrapWithList(stringifyGraphQLType(type), isList)
+function hasCorrectScalarType(value: any, inputType: DMMF.SchemaArgInputType, context: MakeDocumentContext): boolean {
+  const { isList } = inputType
+  const expectedType = getExpectedType(inputType, context)
   const graphQLType = getGraphQLType(value, inputType)
 
   if (graphQLType === expectedType) {
@@ -1098,7 +1161,12 @@ function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.S
     return true
   }
 
-  if (expectedType === 'Json' && graphQLType !== 'Symbol' && !(value instanceof ObjectEnumValue)) {
+  if (
+    expectedType === 'Json' &&
+    graphQLType !== 'Symbol' &&
+    !(value instanceof ObjectEnumValue) &&
+    !(value instanceof FieldRefImpl)
+  ) {
     return true
   }
 
@@ -1106,23 +1174,7 @@ function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.S
     return true
   }
 
-  if (graphQLType === 'List<Int>' && expectedType === 'List<BigInt>') {
-    return true
-  }
-
-  if (graphQLType === 'List<BigInt | Int>' && expectedType === 'List<BigInt>') {
-    return true
-  }
-
-  if (graphQLType === 'List<Int | BigInt>' && expectedType === 'List<BigInt>') {
-    return true
-  }
-
   if ((graphQLType === 'Int' || graphQLType === 'Float') && expectedType === 'Decimal') {
-    return true
-  }
-
-  if (isValidDecimalListInput(graphQLType, value) && expectedType === 'List<Decimal>') {
     return true
   }
 
@@ -1130,33 +1182,13 @@ function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.S
   if (graphQLType === 'DateTime' && expectedType === 'String') {
     return true
   }
-  if (graphQLType === 'List<DateTime>' && expectedType === 'List<String>') {
-    return true
-  }
 
   // UUID is a subset of string
   if (graphQLType === 'UUID' && expectedType === 'String') {
     return true
   }
-  if (graphQLType === 'List<UUID>' && expectedType === 'List<String>') {
-    return true
-  }
 
   if (graphQLType === 'String' && expectedType === 'ID') {
-    return true
-  }
-  if (graphQLType === 'List<String>' && expectedType === 'List<ID>') {
-    return true
-  }
-
-  if (graphQLType === 'List<String>' && expectedType === 'List<Json>') {
-    return true
-  }
-
-  if (
-    expectedType === 'List<String>' &&
-    (graphQLType === 'List<String | UUID>' || graphQLType === 'List<UUID | String>')
-  ) {
     return true
   }
 
@@ -1164,14 +1196,9 @@ function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.S
   if (graphQLType === 'Int' && expectedType === 'Float') {
     return true
   }
-  if (graphQLType === 'List<Int>' && expectedType === 'List<Float>') {
-    return true
-  }
+
   // Int is a subset of Long
   if (graphQLType === 'Int' && expectedType === 'Long') {
-    return true
-  }
-  if (graphQLType === 'List<Int>' && expectedType === 'List<Long>') {
     return true
   }
 
@@ -1184,25 +1211,30 @@ function hasCorrectScalarType(value: any, arg: DMMF.SchemaArg, inputType: DMMF.S
     return true
   }
 
+  if (inputType.isList && Array.isArray(value)) {
+    // when it's a list, we check that all the conditions above are met within that list
+    return value.every((v) => hasCorrectScalarType(v, { ...inputType, isList: false }, context))
+  }
+
   return false
 }
 
-const cleanObject = (obj) => filterObject(obj, (k, v) => v !== undefined)
-
-function isValidDecimalListInput(graphQLType: string, value: any[]): boolean {
-  return (
-    graphQLType === 'List<Int>' ||
-    graphQLType === 'List<Float>' ||
-    (graphQLType === 'List<String>' && value.every(isDecimalString))
-  )
+function getExpectedType(inputType: DMMF.SchemaArgInputType, context: MakeDocumentContext, isList = inputType.isList) {
+  let type = stringifyGraphQLType(inputType.type)
+  if (inputType.location === 'fieldRefTypes' && context.modelName) {
+    type += `<${context.modelName}>`
+  }
+  return wrapWithList(type, isList)
 }
+
+const cleanObject = (obj) => filterObject(obj, (k, v) => v !== undefined)
 
 function isDecimalString(value: string): boolean {
   // from https://github.com/MikeMcl/decimal.js/blob/master/decimal.js#L116
   return /^\-?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(value)
 }
 
-function valueToArg(key: string, value: any, arg: DMMF.SchemaArg): Arg | null {
+function valueToArg(key: string, value: any, arg: DMMF.SchemaArg, context: MakeDocumentContext): Arg | null {
   /**
    * Go through the possible union input types.
    * Stop on the first successful one
@@ -1212,7 +1244,7 @@ function valueToArg(key: string, value: any, arg: DMMF.SchemaArg): Arg | null {
   const argsWithErrors: { arg: Arg; errors: ArgError[] }[] = []
 
   for (const inputType of arg.inputTypes) {
-    maybeArg = tryInferArgs(key, value, arg, inputType)
+    maybeArg = tryInferArgs(key, value, arg, inputType, context)
     if (maybeArg?.collectErrors().length === 0) {
       return maybeArg
     }
@@ -1299,7 +1331,13 @@ function sum(n: number[]): number {
  * @param arg
  * @param inputType
  */
-function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: DMMF.SchemaArgInputType): Arg | null {
+function tryInferArgs(
+  key: string,
+  value: any,
+  arg: DMMF.SchemaArg,
+  inputType: DMMF.SchemaArgInputType,
+  context: MakeDocumentContext,
+): Arg | null {
   if (typeof value === 'undefined') {
     // the arg is undefined and not required - we're fine
     if (!arg.isRequired) {
@@ -1362,15 +1400,17 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
         const numKeys = keys.length
 
         if (
-          numKeys === 0 &&
-          typeof inputType.type.constraints.minNumFields === 'number' &&
-          inputType.type.constraints.minNumFields > 0
+          (numKeys === 0 &&
+            typeof inputType.type.constraints.minNumFields === 'number' &&
+            inputType.type.constraints.minNumFields > 0) ||
+          inputType.type.constraints.fields?.some((field) => keys.includes(field)) === false
         ) {
           // continue here
           error = {
             type: 'atLeastOne',
             key,
             inputType: inputType.type,
+            atLeastFields: inputType.type.constraints.fields,
           }
         } else if (
           numKeys > 1 &&
@@ -1387,7 +1427,7 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
 
         return new Arg({
           key,
-          value: val === null ? null : objectToArgs(val, inputType.type, arg.inputTypes),
+          value: val === null ? null : objectToArgs(val, inputType.type, context, arg.inputTypes),
           isEnum: inputType.location === 'enumTypes',
           error,
           inputType,
@@ -1395,7 +1435,7 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
         })
       }
     } else {
-      return scalarToArg(key, value, arg, inputType)
+      return scalarToArg(key, value, arg, inputType, context)
     }
   }
 
@@ -1413,7 +1453,7 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
 
   if (inputType.location === 'enumTypes' || inputType.location === 'scalar') {
     // if no value is incorrect
-    return scalarToArg(key, value, arg, inputType)
+    return scalarToArg(key, value, arg, inputType, context)
   }
 
   const argInputType = inputType.type as DMMF.InputType
@@ -1445,7 +1485,7 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
 
   if (!Array.isArray(value)) {
     for (const nestedArgInputType of arg.inputTypes) {
-      const args = objectToArgs(value, nestedArgInputType.type as DMMF.InputType)
+      const args = objectToArgs(value, nestedArgInputType.type as DMMF.InputType, context)
       if (args.collectErrors().length === 0) {
         return new Arg({
           key,
@@ -1467,7 +1507,7 @@ function tryInferArgs(key: string, value: any, arg: DMMF.SchemaArg, inputType: D
       if (typeof v !== 'object' || !value) {
         return getInvalidTypeArg(key, v, arg, inputType)
       }
-      return objectToArgs(v, argInputType)
+      return objectToArgs(v, argInputType, context)
     }),
     isEnum: false,
     inputType,
@@ -1488,8 +1528,14 @@ export function isInputArgType(argType: DMMF.ArgType): argType is DMMF.InputType
   return true
 }
 
-function scalarToArg(key: string, value: any, arg: DMMF.SchemaArg, inputType: DMMF.SchemaArgInputType): Arg {
-  if (hasCorrectScalarType(value, arg, inputType)) {
+function scalarToArg(
+  key: string,
+  value: any,
+  arg: DMMF.SchemaArg,
+  inputType: DMMF.SchemaArgInputType,
+  context: MakeDocumentContext,
+): Arg {
+  if (hasCorrectScalarType(value, inputType, context)) {
     return new Arg({
       key,
       value,
@@ -1504,9 +1550,13 @@ function scalarToArg(key: string, value: any, arg: DMMF.SchemaArg, inputType: DM
 function objectToArgs(
   initialObj: any,
   inputType: DMMF.InputType,
+  context: MakeDocumentContext,
   possibilities?: DMMF.SchemaArgInputType[],
   outputType?: DMMF.OutputType,
 ): Args {
+  if (inputType.meta?.source) {
+    context = { modelName: inputType.meta.source }
+  }
   // filter out undefined values and treat them if they weren't provided
   const obj = cleanObject(initialObj)
   const { fields: args, fieldMap } = inputType
@@ -1538,7 +1588,7 @@ function objectToArgs(
       return acc
     }
 
-    const arg = valueToArg(argName, value, schemaArg)
+    const arg = valueToArg(argName, value, schemaArg, context)
 
     if (arg) {
       acc.push(arg)
@@ -1584,7 +1634,7 @@ export interface UnpackOptions {
 }
 
 /**
- * Unpacks the result of a data object and maps DateTime fields to instances of `Date` inplace
+ * Unpacks the result of a data object and maps DateTime fields to instances of `Date` in-place
  * @param options: UnpackOptions
  */
 export function unpack({ document, path, data }: UnpackOptions): any {

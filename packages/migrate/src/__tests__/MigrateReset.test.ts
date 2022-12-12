@@ -164,7 +164,7 @@ describe('reset', () => {
     prompt.inject([new Error()]) // simulate user cancellation
 
     const result = MigrateReset.new().parse([])
-    await expect(result).rejects.toMatchInlineSnapshot(`process.exit: 0`)
+    await expect(result).rejects.toMatchInlineSnapshot(`process.exit: 130`)
     expect(ctx.mocked['console.info'].mock.calls.join('\n')).toMatchInlineSnapshot(`
       Prisma schema loaded from prisma/schema.prisma
       Datasource "my_db": SQLite database "dev.db" at "file:dev.db"
@@ -173,7 +173,7 @@ describe('reset', () => {
       Reset cancelled.
     `)
     expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
-    expect(mockExit).toBeCalledWith(0)
+    expect(mockExit).toBeCalledWith(130)
   })
 
   it('reset should error in unattended environment', async () => {
@@ -267,7 +267,7 @@ describe('reset', () => {
     expect(ctx.mocked['console.warn'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
     expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-            An error occured while running the seed command:
+            An error occurred while running the seed command:
             Error: Command failed with exit code 1: node prisma/seed.js
         `)
     expect(mockExit).toBeCalledWith(1)
