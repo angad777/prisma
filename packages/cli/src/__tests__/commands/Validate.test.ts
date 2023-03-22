@@ -1,4 +1,5 @@
-import { jestConsoleContext, jestContext, serializeQueryEngineName } from '@prisma/internals'
+import { jestConsoleContext, jestContext } from '@prisma/get-platform'
+import { serializeQueryEngineName } from '@prisma/internals'
 
 import { Validate } from '../../Validate'
 
@@ -21,12 +22,12 @@ describe('validate', () => {
 
   it('should throw if schema is invalid', async () => {
     ctx.fixture('example-project/prisma')
-    await expect(Validate.new().parse(['--schema=broken.prisma'])).rejects.toThrowError('Prisma schema validation')
+    await expect(Validate.new().parse(['--schema=broken.prisma'])).rejects.toThrow('Prisma schema validation')
   })
 
   it('should throw if env var is not set', async () => {
     ctx.fixture('example-project/prisma')
-    await expect(Validate.new().parse(['--schema=env-does-not-exists.prisma'])).rejects.toThrowError(
+    await expect(Validate.new().parse(['--schema=env-does-not-exists.prisma'])).rejects.toThrow(
       'Environment variable not found',
     )
   })
@@ -38,24 +39,24 @@ describe('validate', () => {
     // stderr
     expect(ctx.mocked['console.warn'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                              Prisma schema warning:
-                              - Preview feature "nativeTypes" is deprecated. The functionality can be used without specifying it as a preview feature.
-                  `)
+      Prisma schema warning:
+      - Preview feature "nativeTypes" is deprecated. The functionality can be used without specifying it as a preview feature.
+    `)
     expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
   })
 
   it('should throw with an error and show a warning on stderr (preview feature deprecated)', async () => {
     ctx.fixture('lint-warnings')
-    await expect(Validate.new().parse(['--schema=preview-feature-deprecated-and-error.prisma'])).rejects.toThrowError(
+    await expect(Validate.new().parse(['--schema=preview-feature-deprecated-and-error.prisma'])).rejects.toThrow(
       'P1012',
     )
 
     // stderr
     expect(ctx.mocked['console.warn'].mock.calls.join('\n')).toMatchInlineSnapshot(`
 
-                              Prisma schema warning:
-                              - Preview feature "nativeTypes" is deprecated. The functionality can be used without specifying it as a preview feature.
-                  `)
+                                          Prisma schema warning:
+                                          - Preview feature "nativeTypes" is deprecated. The functionality can be used without specifying it as a preview feature.
+                          `)
     expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(``)
   })
 
@@ -83,7 +84,7 @@ describe('validate', () => {
         await Validate.new().parse(['--schema', './prisma/postgres.prisma'])
       } catch (e) {
         expect(serializeQueryEngineName(e.message)).toMatchInlineSnapshot(`
-          Prisma schema validation - (query-engine-NORMALIZED)
+          Prisma schema validation - (validate wasm)
           Error code: P1012
           error: Error validating: Invalid referential action: \`NoAction\`. Allowed values: (\`Cascade\`, \`Restrict\`, \`SetNull\`). \`NoAction\` is not implemented for Postgres when using \`relationMode = "prisma"\`, you could try using \`Restrict\` instead. Learn more at https://pris.ly/d/relation-mode
             -->  schema.prisma:21
@@ -99,7 +100,7 @@ describe('validate', () => {
              | 
 
           Validation Error Count: 2
-          [Context: getDmmf]
+          [Context: validate]
 
           Prisma CLI Version : 0.0.0
         `)
@@ -113,7 +114,7 @@ describe('validate', () => {
         await Validate.new().parse(['--schema', './prisma/postgres.prisma'])
       } catch (e) {
         expect(serializeQueryEngineName(e.message)).toMatchInlineSnapshot(`
-          Prisma schema validation - (query-engine-NORMALIZED)
+          Prisma schema validation - (validate wasm)
           Error code: P1012
           error: Error validating: Invalid referential action: \`NoAction\`. Allowed values: (\`Cascade\`, \`Restrict\`, \`SetNull\`). \`NoAction\` is not implemented for Postgres when using \`relationMode = "prisma"\`, you could try using \`Restrict\` instead. Learn more at https://pris.ly/d/relation-mode
             -->  schema.prisma:21
@@ -129,7 +130,7 @@ describe('validate', () => {
              | 
 
           Validation Error Count: 2
-          [Context: getDmmf]
+          [Context: validate]
 
           Prisma CLI Version : 0.0.0
         `)

@@ -7,15 +7,12 @@ import execa from 'execa'
 import { existsSync, promises as fs } from 'fs'
 import globby from 'globby'
 import fetch from 'node-fetch'
-import pMap from 'p-map'
 import pReduce from 'p-reduce'
 import pRetry from 'p-retry'
 import path from 'path'
 import redis from 'redis'
 import semver from 'semver'
 import { promisify } from 'util'
-
-import { unique } from './unique'
 
 export type Commit = {
   date: Date
@@ -25,19 +22,8 @@ export type Commit = {
   parentCommits: string[]
 }
 
-async function getLatestChanges(): Promise<string[]> {
-  return getChangesFromCommit(await getLatestCommit('.'))
-}
-
-async function getChangesFromCommit(commit: Commit): Promise<string[]> {
-  const hashes = commit.isMergeCommit ? commit.parentCommits.join(' ') : commit.hash
-  const changes = await runResult(commit.dir, `git diff-tree --no-commit-id --name-only -r ${hashes}`)
-  if (changes.trim().length > 0) {
-    return changes.split('\n').map((change) => path.join(commit.dir, change))
-  } else {
-    throw new Error(`No changes detected. This must not happen!`)
-  }
-}
+const onlyPackages = process.env.ONLY_PACKAGES ? process.env.ONLY_PACKAGES.split(',') : null
+const skipPackages = process.env.SKIP_PACKAGES ? process.env.SKIP_PACKAGES.split(',') : null
 
 async function getUnsavedChanges(dir: string): Promise<string | null> {
   const result = await runResult(dir, `git status --porcelain`)
@@ -287,7 +273,7 @@ async function getNewDevVersion(packages: Packages): Promise<string> {
 
   console.log(`getNewDevVersion: Next minor stable: ${nextStable}`)
 
-  const versions = await getAllVersions(packages, 'dev', nextStable + '-dev')
+  const versions = await getAllVersionsPublishedFor(packages, 'dev', nextStable + '-dev')
   const maxDev = getMaxDevVersionIncrement(versions)
 
   const version = `${nextStable}-dev.${maxDev + 1}`
@@ -313,7 +299,7 @@ async function getNewIntegrationVersion(packages: Packages, branch: string): Pro
   const branchWithoutPrefix = branch.replace(/^integration\//, '')
   const versionNameSlug = `${nextStable}-integration-${slugify(branchWithoutPrefix)}`
 
-  const versions = await getAllVersions(packages, 'integration', versionNameSlug)
+  const versions = await getAllVersionsPublishedFor(packages, 'integration', versionNameSlug)
   const maxIntegration = getMaxIntegrationVersionIncrement(versions)
 
   const version = `${versionNameSlug}.${maxIntegration + 1}`
@@ -335,7 +321,21 @@ async function getCurrentPatchForPatchVersions(patchMajorMinor: { major: number;
   // "3.0.1",
   // "3.0.2"
   // ]
-  let versions = JSON.parse(await runResult('.', 'npm view @prisma/client@* version --json'))
+
+  // We retry a few times if it fails
+  // npm can have some hiccups
+  const remoteVersionsString = await pRetry(
+    async () => {
+      return await runResult('.', 'npm view @prisma/client@* version --json')
+    },
+    {
+      retries: 6,
+      onFailedAttempt: (e) => {
+        console.error(e)
+      },
+    },
+  )
+  let versions = JSON.parse(remoteVersionsString)
 
   // inconsistent npm api
   if (!Array.isArray(versions)) {
@@ -380,7 +380,7 @@ async function getNewPatchDevVersion(packages: Packages, patchBranch: string): P
   const currentPatch = await getCurrentPatchForPatchVersions(patchMajorMinor)
   const newPatch = currentPatch + 1
   const newVersion = `${patchMajorMinor.major}.${patchMajorMinor.minor}.${newPatch}`
-  const versions = [...(await getAllVersions(packages, 'dev', newVersion))]
+  const versions = [...(await getAllVersionsPublishedFor(packages, 'dev', newVersion))]
   const maxIncrement = getMaxPatchVersionIncrement(versions)
 
   return `${newVersion}-dev.${maxIncrement + 1}`
@@ -434,50 +434,83 @@ function getMaxPatchVersionIncrement(versions: string[]): number {
   return Math.max(...increments, 0)
 }
 
-// TODO: we can simplify this into one line (cc Joël)
-async function getAllVersions(packages: Packages, channel: string, prefix: string): Promise<string[]> {
-  return unique(
-    flatten(
-      await pMap(
-        Object.values(packages).filter((p) => p.name !== '@prisma/integration-tests'),
-        async (pkg) => {
-          if (pkg.name === '@prisma/integration-tests') {
-            return []
-          }
-          const pkgVersions = [] as string[]
-          if (pkg.version.startsWith(prefix)) {
-            pkgVersions.push(pkg.version)
-          }
-          const remoteVersionsString = await runResult('.', `npm info ${pkg.name} versions --json`)
+/**
+ * @param pkgs
+ * @param channel
+ * @param prefix
+ * @returns All versions published on npm for a given channel and prefix
+ */
+export async function getAllVersionsPublishedFor(pkgs: Packages, channel: string, prefix: string): Promise<string[]> {
+  // We check the versions for the `@prisma/debug` package
+  // Why?
+  // Because `@prisma/debug` is the first package that will be published
+  // So if npm fails to publish one of the packages,
+  // we cannot republish on the same version on a next run
+  const pkg = pkgs['@prisma/debug']
 
-          const remoteVersions = JSON.parse(remoteVersionsString)
+  const values = async (pkg: Package) => {
+    const pkgVersions = [] as string[]
+    if (pkg.version.startsWith(prefix)) {
+      pkgVersions.push(pkg.version)
+    }
 
-          for (const remoteVersion of remoteVersions) {
-            if (
-              remoteVersion.includes(channel) &&
-              remoteVersion.startsWith(prefix) &&
-              !pkgVersions.includes(remoteVersion)
-            ) {
-              pkgVersions.push(remoteVersion)
-            }
-          }
-          return pkgVersions
+    // We retry a few times if it fails
+    // npm can have some hiccups
+    const remoteVersionsString = await pRetry(
+      async () => {
+        return await runResult('.', `npm info ${pkg.name} versions --json`)
+      },
+      {
+        retries: 6,
+        onFailedAttempt: (e) => {
+          console.error(e)
         },
-        { concurrency: 3 }, // Let's not spam npm too much
-      ),
-    ),
-  )
+      },
+    )
+    const remoteVersions: string = JSON.parse(remoteVersionsString)
+
+    for (const remoteVersion of remoteVersions) {
+      if (remoteVersion.includes(channel) && remoteVersion.startsWith(prefix) && !pkgVersions.includes(remoteVersion)) {
+        pkgVersions.push(remoteVersion)
+      }
+    }
+
+    return pkgVersions
+  }
+
+  return [...new Set(await values(pkg))]
 }
 
+/**
+ * Only used when publishing to the `dev` and `integration` npm channels
+ * (see `getNewDevVersion()` and `getNewIntegrationVersion()`)
+ * @returns The next minor version for the `latest` channel
+ * Example: If latest is `4.9.0` it will return `4.10.0`
+ */
 async function getNextMinorStable() {
-  const remoteVersion = await runResult('.', `npm info prisma version`)
-
-  return increaseMinor(remoteVersion)
+  // We check the Prisma CLI `latest` version
+  // We retry a few times if it fails
+  // npm can have some hiccups
+  const remoteVersionString = await pRetry(
+    async () => {
+      return await runResult('.', `npm info prisma version`)
+    },
+    {
+      retries: 6,
+      onFailedAttempt: (e) => {
+        console.error(e)
+      },
+    },
+  )
+  return increaseMinor(remoteVersionString)
 }
 
 // TODO: could probably use the semver package
 function getSemverFromPatchBranch(version: string) {
-  const regex = /(\d+)\.(\d+)\.x/
+  // the branch name must match
+  // number.number.x like 3.0.x or 2.29.x
+  // as an exact match, no character before or after
+  const regex = /^(\d+)\.(\d+)\.x$/
   const match = regex.exec(version)
 
   if (match) {
@@ -560,7 +593,8 @@ async function publish() {
   if (process.env.BUILDKITE && args['--publish']) {
     console.log(`We're in buildkite and will publish, so we will acquire a lock...`)
     const before = Date.now()
-    unlock = await acquireLock(process.env.BUILDKITE_BRANCH) // TODO: problem lock might not work for more than 2 jobs
+    // TODO: problem lock might not work for more than 2 jobs
+    unlock = await acquireLock(process.env.BUILDKITE_BRANCH)
     const after = Date.now()
     console.log(`Acquired lock after ${after - before}ms`)
   }
@@ -617,28 +651,13 @@ async function publish() {
       prismaVersion,
     })
 
-    // TODO: investigate this
-    const packagesWithVersions = await getNewPackageVersions(packages, prismaVersion)
-
-    // TODO: can be removed probably
-    if (process.env.UPDATE_STUDIO) {
-      console.log(chalk.bold(`UPDATE_STUDIO is set, so we only update Prisma Client and all dependants.`))
-
-      // We know, that Prisma Client and Prisma CLI are always part of the release.
-      // Therefore, also Migrate is also always part of the release, as it depends on Prisma Client.
-      // We can therefore safely update Studio, as migrate and Prisma CLI are depending on Studio
-      const latestStudioVersion = await runResult('.', 'npm info @prisma/studio-server version')
-      console.log(`UPDATE_STUDIO set true, so we're updating it to ${latestStudioVersion}`)
-      console.log(`Active branch`)
-      await run('.', 'git branch')
-      console.log(`Let's check out main!`)
-      await run('.', 'git checkout main')
-      await run('.', `pnpm update  -r @prisma/studio-server@${latestStudioVersion}`)
-    }
-
     if (!dryRun && args['--test']) {
-      console.log(chalk.bold('\nTesting all packages...'))
-      await testPackages(packages, getPublishOrder(packages))
+      if (onlyPackages || skipPackages) {
+        console.log(chalk.bold('\nTesting all packages was skipped because onlyPackages or skipPackages is set.'))
+      } else {
+        console.log(chalk.bold('\nTesting all packages...'))
+        await testPackages(packages, getPublishOrder(packages))
+      }
     }
 
     if (args['--publish'] || dryRun) {
@@ -657,12 +676,12 @@ Check them out at https://github.com/prisma/ecosystem-tests/actions?query=workfl
 
       if (!dryRun) {
         console.log(`Let's first do a dry run!`)
-        await publishPackages(packages, packagesWithVersions, publishOrder, true, prismaVersion, tag, args['--release'])
+        await publishPackages(packages, publishOrder, true, prismaVersion, tag, args['--release'])
         console.log(`Waiting 5 sec so you can check it out first...`)
         await new Promise((r) => setTimeout(r, 5000))
       }
 
-      await publishPackages(packages, packagesWithVersions, publishOrder, dryRun, prismaVersion, tag, args['--release'])
+      await publishPackages(packages, publishOrder, dryRun, prismaVersion, tag, args['--release'])
 
       const enginesCommit = await getEnginesCommit()
       const enginesCommitInfo = await getCommitInfo('prisma-engines', enginesCommit)
@@ -879,7 +898,20 @@ async function patch(pkg: Package) {
   if (pkg.name === '@prisma/integration-tests') {
     return localVersion
   }
-  const npmVersion = await runResult('.', `npm info ${pkg.name} version`)
+
+  // We retry a few times if it fails
+  // npm can have some hiccups
+  const npmVersion = await pRetry(
+    async () => {
+      return await runResult('.', `npm info ${pkg.name} version`)
+    },
+    {
+      retries: 6,
+      onFailedAttempt: (e) => {
+        console.error(e)
+      },
+    },
+  )
 
   const maxVersion = semver.maxSatisfying([localVersion, npmVersion], '*', {
     loose: true,
@@ -906,7 +938,7 @@ function filterPublishOrder(publishOrder: string[][], packages: string[]): strin
 
 async function publishPackages(
   packages: Packages,
-  changedPackages: PackagesWithNewVersions,
+  // TODO: pnpm can calculate this for us when using `pnpm -r publish`
   publishOrder: string[][],
   dryRun: boolean,
   prismaVersion: string,
@@ -937,7 +969,7 @@ async function publishPackages(
   if (releaseVersion) {
     console.log(
       chalk.red.bold(
-        `\nThis will ${chalk.underline('release')} a new version of prisma CLI on latest: ${chalk.underline(
+        `\nThis will ${chalk.underline('release')} a new version of Prisma packages on latest: ${chalk.underline(
           prismaVersion,
         )}`,
       ),
@@ -949,6 +981,7 @@ async function publishPackages(
       })
     }
   } else if (!dryRun) {
+    // For dev releases
     console.log(`\nGiving you 5s to review the changes...`)
     await new Promise((r) => {
       setTimeout(r, 5_000)
@@ -1005,8 +1038,7 @@ async function publishPackages(
         })
       }
 
-      const skipPackages: string[] = []
-      if (!skipPackages.includes(pkgName)) {
+      if (!isSkipped(pkgName)) {
         /*
          *  About `--no-git-checks`
          *  By default, `pnpm publish` will make some checks before actually publishing a new version of your package.
@@ -1020,7 +1052,7 @@ async function publishPackages(
     }
   }
 
-  if (process.env.UPDATE_STUDIO || process.env.PATCH_BRANCH) {
+  if (process.env.PATCH_BRANCH) {
     if (process.env.CI) {
       await run('.', `git config --global user.email "prismabots@gmail.com"`)
       await run('.', `git config --global user.name "prisma-bot"`)
@@ -1033,14 +1065,8 @@ async function publishPackages(
     )
   }
 
-  if (process.env.UPDATE_STUDIO) {
-    await run('.', `git stash`, dryRun)
-    await run('.', `git checkout main`, dryRun)
-    await run('.', `git stash pop`, dryRun)
-  }
-
-  // for now only push when studio is being updated
-  if (!process.env.BUILDKITE || process.env.UPDATE_STUDIO || process.env.PATCH_BRANCH) {
+  // TODO: remove?
+  if (!process.env.BUILDKITE || process.env.PATCH_BRANCH) {
     const repo = path.join(__dirname, '../../../')
     // commit and push it :)
     // we try catch this, as this is not necessary for CI to succeed
@@ -1059,7 +1085,7 @@ async function publishPackages(
         console.log(`\n${chalk.bold('Skipping')} committing changes, as they're already committed`)
       } else {
         console.log(`\nCommitting changes`)
-        const message = process.env.UPDATE_STUDIO ? 'Bump Studio' : 'Bump versions'
+        const message = 'Bump versions'
         await commitChanges(repo, `${message} [skip ci]`, dryRun)
       }
       const branch = process.env.PATCH_BRANCH
@@ -1069,6 +1095,18 @@ async function publishPackages(
       console.error(`Ignoring this error, continuing`)
     }
   }
+}
+
+function isSkipped(pkgName) {
+  if (skipPackages && skipPackages.includes(pkgName)) {
+    return true
+  }
+
+  if (onlyPackages && !onlyPackages.includes(pkgName)) {
+    return true
+  }
+
+  return false
 }
 
 async function acquireLock(branch: string): Promise<() => void> {

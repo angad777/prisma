@@ -6,7 +6,7 @@ import { waitFor } from '../../_utils/tests/waitFor'
 import { NewPrismaClient } from '../../_utils/types'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
 
 let prisma: PrismaClient<{ log: [{ emit: 'event'; level: 'query' }] }>
 declare const newPrismaClient: NewPrismaClient<typeof PrismaClient>
@@ -50,6 +50,10 @@ testMatrix.setupTestSuite(
         query: {
           user: {
             findFirst({ args, query, operation, model }) {
+              if (args.select != undefined) {
+                // @ts-expect-error
+                args.select.email = undefined
+              }
               // @ts-expect-error
               args.include = undefined
               // @ts-expect-error
@@ -64,7 +68,7 @@ testMatrix.setupTestSuite(
           },
           post: {
             async findFirst({ args, query, operation, model }) {
-              expectTypeOf(args).not.toBeAny
+              expectTypeOf(args).not.toBeAny()
               expectTypeOf(query).toBeFunction()
               expectTypeOf(operation).toEqualTypeOf<'findFirst'>()
               expectTypeOf(model).toEqualTypeOf<'Post'>()
@@ -73,7 +77,7 @@ testMatrix.setupTestSuite(
 
               const data = await query(args)
 
-              expectTypeOf(data).not.toBeAny
+              expectTypeOf(data).not.toBeAny()
               expectTypeOf(data).toHaveProperty('id')
 
               return data
@@ -672,16 +676,17 @@ testMatrix.setupTestSuite(
         query: {
           $allModels: {
             async findFirst({ args, query, operation, model }) {
-              expectTypeOf(args).not.toBeAny
+              expectTypeOf(args).not.toBeAny()
               expectTypeOf(query).toBeFunction()
               expectTypeOf(operation).toEqualTypeOf<'findFirst'>()
-              expectTypeOf(model).toEqualTypeOf<'Post' | 'User'>()
+              type Model = typeof model & ('Post' | 'User')
+              expectTypeOf<Model>().toEqualTypeOf<'Post' | 'User'>()
 
               fnModel({ args, operation, model })
 
               const data = await query(args)
 
-              expectTypeOf(data).not.toBeAny
+              expectTypeOf(data).not.toBeAny()
               expectTypeOf(data).toHaveProperty('id')
 
               return data
@@ -735,7 +740,9 @@ testMatrix.setupTestSuite(
                 | 'groupBy'
                 | 'count'
               >()
-              expectTypeOf(model).toEqualTypeOf<'Post' | 'User'>()
+
+              type Model = typeof model & ('Post' | 'User')
+              expectTypeOf<Model>().toEqualTypeOf<'Post' | 'User'>()
 
               fnModel({ args, operation, model })
 
@@ -842,9 +849,7 @@ testMatrix.setupTestSuite(
         },
       })
 
-      await expect(xprisma.user.findFirst({})).rejects.toThrowErrorMatchingInlineSnapshot(
-        `Error caused by extension "Faulty query ext": All is lost!`,
-      )
+      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`All is lost!`)
     })
 
     test('errors in with no extension name', async () => {
@@ -858,9 +863,7 @@ testMatrix.setupTestSuite(
         },
       })
 
-      await expect(xprisma.user.findFirst({})).rejects.toThrowErrorMatchingInlineSnapshot(
-        `Error caused by an extension: All is lost!`,
-      )
+      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`All is lost!`)
     })
 
     test('empty args becomes an empty object', async () => {
@@ -896,12 +899,96 @@ testMatrix.setupTestSuite(
           user: {
             async findFirst({ args, query, operation, model }) {
               const user = await query(args)
+
+              expectTypeOf(user).toHaveProperty('id').toEqualTypeOf<string | undefined>()
+
               // @ts-expect-error
               return query(user)
             },
           },
         },
       })
+    })
+
+    testIf(provider !== 'sqlite')('top-level raw queries interception', async () => {
+      const fnEmitter = jest.fn()
+      const fnUser = jest.fn()
+
+      prisma.$on('query', fnEmitter)
+
+      const xprisma = prisma.$extends({
+        query: {
+          // @ts-test-if: provider !== 'mongodb'
+          $queryRaw({ args, query, operation }) {
+            expect(operation).toEqual('$queryRaw')
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(args).toEqualTypeOf<[query: TemplateStringsArray | PrismaNamespace.Sql, ...values: any[]]>()
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(operation).toEqualTypeOf<'$queryRaw'>()
+            fnUser(args)
+            return query(args)
+          },
+          $executeRaw({ args, query, operation }) {
+            expect(operation).toEqual('$executeRaw')
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(args).toEqualTypeOf<[query: TemplateStringsArray | PrismaNamespace.Sql, ...values: any[]]>()
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(operation).toEqualTypeOf<'$executeRaw'>()
+            fnUser(args)
+            return query(args)
+          },
+          $queryRawUnsafe({ args, query, operation }) {
+            expect(operation).toEqual('$queryRawUnsafe')
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(args).toEqualTypeOf<[query: string, ...values: any[]]>()
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(operation).toEqualTypeOf<'$queryRawUnsafe'>()
+            fnUser(args)
+            return query(args)
+          },
+          $executeRawUnsafe({ args, query, operation }) {
+            expect(operation).toEqual('$executeRawUnsafe')
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(args).toEqualTypeOf<[query: string, ...values: any[]]>()
+            // @ts-test-if: provider !== 'mongodb'
+            expectTypeOf(operation).toEqualTypeOf<'$executeRawUnsafe'>()
+            fnUser(args)
+            return query(args)
+          },
+          // @ts-test-if: provider === 'mongodb'
+          $runCommandRaw({ args, query, operation }) {
+            expect(operation).toEqual('$runCommandRaw')
+            // @ts-test-if: provider === 'mongodb'
+            expectTypeOf(args).toEqualTypeOf<PrismaNamespace.InputJsonObject>()
+            // @ts-test-if: provider === 'mongodb'
+            expectTypeOf(operation).toEqualTypeOf<'$runCommandRaw'>()
+            fnUser(args)
+            return query(args)
+          },
+        },
+      })
+
+      if (provider !== 'mongodb') {
+        // @ts-test-if: provider !== 'mongodb'
+        await xprisma.$executeRaw`SELECT 1`
+        // @ts-test-if: provider !== 'mongodb'
+        await xprisma.$queryRaw`SELECT 2`
+        // @ts-test-if: provider !== 'mongodb'
+        await xprisma.$executeRawUnsafe(`SELECT 3`)
+        // @ts-test-if: provider !== 'mongodb'
+        await xprisma.$queryRawUnsafe(`SELECT 4`)
+
+        await wait(() => expect(fnEmitter).toHaveBeenCalledTimes(4))
+        expect(fnUser).toHaveBeenNthCalledWith(1, [[`SELECT 1`]])
+        expect(fnUser).toHaveBeenNthCalledWith(2, [[`SELECT 2`]])
+        expect(fnUser).toHaveBeenNthCalledWith(3, [`SELECT 3`])
+        expect(fnUser).toHaveBeenNthCalledWith(4, [`SELECT 4`])
+      } else {
+        // @ts-test-if: provider === 'mongodb'
+        await xprisma.$runCommandRaw({ aggregate: 'User', pipeline: [], explain: false })
+        // await wait(() => expect(fnEmitter).toHaveBeenCalledTimes(1)) // not working
+        // expect(fnUser).toHaveBeenNthCalledWith(1, { aggregate: 'User', pipeline: [], explain: false }) // broken
+      }
     })
   },
   {

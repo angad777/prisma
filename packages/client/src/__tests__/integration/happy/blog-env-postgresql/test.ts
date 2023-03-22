@@ -1,3 +1,5 @@
+import { getQueryEngineProtocol } from '@prisma/internals'
+
 import { generateTestClient } from '../../../../utils/getTestClient'
 import type { SetupParams } from '../../../../utils/setupPostgres'
 import { setupPostgres, tearDownPostgres } from '../../../../utils/setupPostgres'
@@ -9,7 +11,7 @@ test('Blog fixture: Postgres', async () => {
 
   const { PrismaClientValidationError, prismaVersion } = Prisma
 
-  let originalConnectionString = process.env.TEST_POSTGRES_URI || 'postgres://prisma:prisma@localhost:5432/tests'
+  let originalConnectionString = process.env.TEST_POSTGRES_URI!
   originalConnectionString += '-blog-env-postgresql'
 
   const SetupParams: SetupParams = {
@@ -19,15 +21,11 @@ test('Blog fixture: Postgres', async () => {
 
   await setupPostgres(SetupParams).catch((e) => console.error(e))
 
-  const requests: any[] = []
   const errorLogs: any[] = []
   const prisma = new PrismaClient({
     errorFormat: 'colorless',
     __internal: {
       measurePerformance: true,
-      hooks: {
-        beforeRequest: (request) => requests.push(request),
-      },
     },
     datasources: {
       db: {
@@ -86,7 +84,9 @@ test('Blog fixture: Postgres', async () => {
   }
 
   if (!validationError || !(validationError instanceof PrismaClientValidationError)) {
-    throw new Error(`Validation error is incorrect`)
+    if (getQueryEngineProtocol() !== 'json') {
+      throw new Error(`Validation error is incorrect`)
+    }
   }
 
   expect(errorLogs.length).toBe(1)

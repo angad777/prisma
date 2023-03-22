@@ -1,3 +1,4 @@
+import { getQueryEngineProtocol } from '@prisma/internals'
 import { expectTypeOf } from 'expect-type'
 
 import testMatrix from './_matrix'
@@ -8,7 +9,7 @@ declare let prisma: PrismaClient
 
 // arbitrarily chose delete operation to test errors for invalid inputs
 testMatrix.setupTestSuite((_0, _1, { runtime }) => {
-  testIf(runtime !== 'edge')('where and no keys provided', async () => {
+  testIf(runtime !== 'edge' && getQueryEngineProtocol() !== 'json')('where and no keys provided', async () => {
     const result = prisma.user.delete({
       // @ts-expect-error
       where: {},
@@ -19,29 +20,31 @@ testMatrix.setupTestSuite((_0, _1, { runtime }) => {
       Invalid \`prisma.user.delete()\` invocation in
       /client/tests/functional/extended-where/validation.ts:0:0
 
-         XX // arbitrarily chose delete operation to test errors for invalid inputs
+        XX // arbitrarily chose delete operation to test errors for invalid inputs
         XX testMatrix.setupTestSuite((_0, _1, { runtime }) => {
-        XX   testIf(runtime !== 'edge')('where and no keys provided', async () => {
+        XX   testIf(runtime !== 'edge' && getQueryEngineProtocol() !== 'json')('where and no keys provided', async () => {
       → XX     const result = prisma.user.delete({
                  where: {
                ?   id?: String,
                ?   referralId?: String,
+               ?   paymentId?: String,
                ?   AND?: UserWhereInput | UserWhereInput[],
                ?   OR?: UserWhereInput,
                ?   NOT?: UserWhereInput | UserWhereInput[],
                ?   posts?: PostListRelationFilter,
-               ?   profile?: ProfileRelationFilter | ProfileWhereInput | null
+               ?   profile?: ProfileRelationFilter | ProfileWhereInput | null,
+               ?   payment?: PaymentRelationFilter | PaymentWhereInput | null
                  }
                })
 
-      Argument where of type UserWhereUniqueInput needs at least one argument and at least one argument for id, or referralId. Available args are listed in green.
+      Argument where of type UserWhereUniqueInput needs at least one argument and at least one argument for id, or referralId, or paymentId. Available args are listed in green.
 
       Note: Lines with ? are optional.
 
     `)
   })
 
-  testIf(runtime !== 'edge')('where and missing unique keys', async () => {
+  testIf(runtime !== 'edge' && getQueryEngineProtocol() !== 'json')('where and missing unique keys', async () => {
     const result = prisma.user.delete({
       // @ts-expect-error
       where: {
@@ -56,14 +59,14 @@ testMatrix.setupTestSuite((_0, _1, { runtime }) => {
 
         XX })
         XX 
-        XX testIf(runtime !== 'edge')('where and missing unique keys', async () => {
+        XX testIf(runtime !== 'edge' && getQueryEngineProtocol() !== 'json')('where and missing unique keys', async () => {
       → XX   const result = prisma.user.delete({
                where: {
                  profile: {}
                }
              })
 
-      Argument where of type UserWhereUniqueInput needs at least one argument and at least one argument for id, or referralId. Available args are listed in green.
+      Argument where of type UserWhereUniqueInput needs at least one argument and at least one argument for id, or referralId, or paymentId. Available args are listed in green.
 
 
     `)

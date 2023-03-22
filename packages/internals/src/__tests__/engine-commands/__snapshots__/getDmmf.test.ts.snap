@@ -1,6 +1,6 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`getDMMF @@id model 1`] = `
+exports[`getDMMF success @@id model 1`] = `
 {
   "datamodel": {
     "enums": [],
@@ -5679,6 +5679,12 @@ exports[`getDMMF @@id model 1`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "User1CreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -5947,6 +5953,12 @@ exports[`getDMMF @@id model 1`] = `
               "args": [
                 {
                   "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "User2CreateManyInput",
+                    },
                     {
                       "isList": true,
                       "location": "inputObjectTypes",
@@ -6882,7 +6894,7 @@ exports[`getDMMF @@id model 1`] = `
 }
 `;
 
-exports[`getDMMF @@map model 1`] = `
+exports[`getDMMF success @@map model 1`] = `
 {
   "enums": [],
   "models": [
@@ -6931,7 +6943,7 @@ exports[`getDMMF @@map model 1`] = `
 }
 `;
 
-exports[`getDMMF @@map model 2`] = `
+exports[`getDMMF success @@map model 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -9944,6 +9956,12 @@ exports[`getDMMF @@map model 2`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "UserCreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -10463,7 +10481,7 @@ exports[`getDMMF @@map model 2`] = `
 }
 `;
 
-exports[`getDMMF @@unique model 1`] = `
+exports[`getDMMF success @@unique model 1`] = `
 {
   "datamodel": {
     "enums": [],
@@ -11014,25 +11032,6 @@ exports[`getDMMF @@unique model 1`] = `
                   "isList": false,
                   "location": "inputObjectTypes",
                   "namespace": "prisma",
-                  "type": "UserRelationFilter",
-                },
-                {
-                  "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserWhereInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "author",
-            },
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
                   "type": "IntFilter",
                 },
                 {
@@ -11081,6 +11080,25 @@ exports[`getDMMF @@unique model 1`] = `
               "isRequired": false,
               "name": "published",
             },
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserRelationFilter",
+                },
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserWhereInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "author",
+            },
           ],
           "meta": {
             "source": "Post",
@@ -11105,19 +11123,6 @@ exports[`getDMMF @@unique model 1`] = `
               "isNullable": false,
               "isRequired": false,
               "name": "id",
-            },
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserOrderByWithRelationInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "author",
             },
             {
               "inputTypes": [
@@ -11157,6 +11162,19 @@ exports[`getDMMF @@unique model 1`] = `
               "isNullable": false,
               "isRequired": false,
               "name": "published",
+            },
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserOrderByWithRelationInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "author",
             },
           ],
           "name": "PostOrderByWithRelationInput",
@@ -12816,19 +12834,6 @@ exports[`getDMMF @@unique model 1`] = `
               "inputTypes": [
                 {
                   "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserCreateNestedOneWithoutPostsInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": true,
-              "name": "author",
-            },
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
                   "location": "scalar",
                   "type": "String",
                 },
@@ -12848,6 +12853,19 @@ exports[`getDMMF @@unique model 1`] = `
               "isNullable": false,
               "isRequired": false,
               "name": "published",
+            },
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserCreateNestedOneWithoutPostsInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": true,
+              "name": "author",
             },
           ],
           "name": "PostCreateInput",
@@ -12937,19 +12955,6 @@ exports[`getDMMF @@unique model 1`] = `
               "inputTypes": [
                 {
                   "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserUpdateOneRequiredWithoutPostsNestedInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "author",
-            },
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
                   "location": "scalar",
                   "type": "String",
                 },
@@ -12981,6 +12986,19 @@ exports[`getDMMF @@unique model 1`] = `
               "isNullable": false,
               "isRequired": false,
               "name": "published",
+            },
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserUpdateOneRequiredWithoutPostsNestedInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "author",
             },
           ],
           "name": "PostUpdateInput",
@@ -14661,41 +14679,6 @@ exports[`getDMMF @@unique model 1`] = `
               "inputTypes": [
                 {
                   "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserWhereInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "is",
-            },
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
-                  "location": "inputObjectTypes",
-                  "namespace": "prisma",
-                  "type": "UserWhereInput",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "isNot",
-            },
-          ],
-          "name": "UserRelationFilter",
-        },
-        {
-          "constraints": {
-            "maxNumFields": null,
-            "minNumFields": null,
-          },
-          "fields": [
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
                   "location": "scalar",
                   "type": "String",
                 },
@@ -14884,6 +14867,41 @@ exports[`getDMMF @@unique model 1`] = `
             },
           ],
           "name": "BoolFilter",
+        },
+        {
+          "constraints": {
+            "maxNumFields": null,
+            "minNumFields": null,
+          },
+          "fields": [
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserWhereInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "is",
+            },
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "UserWhereInput",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "isNot",
+            },
+          ],
+          "name": "UserRelationFilter",
         },
         {
           "constraints": {
@@ -16500,6 +16518,48 @@ exports[`getDMMF @@unique model 1`] = `
         },
         {
           "constraints": {
+            "maxNumFields": 1,
+            "minNumFields": 1,
+          },
+          "fields": [
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "scalar",
+                  "type": "String",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "set",
+            },
+          ],
+          "name": "StringFieldUpdateOperationsInput",
+        },
+        {
+          "constraints": {
+            "maxNumFields": 1,
+            "minNumFields": 1,
+          },
+          "fields": [
+            {
+              "inputTypes": [
+                {
+                  "isList": false,
+                  "location": "scalar",
+                  "type": "Boolean",
+                },
+              ],
+              "isNullable": false,
+              "isRequired": false,
+              "name": "set",
+            },
+          ],
+          "name": "BoolFieldUpdateOperationsInput",
+        },
+        {
+          "constraints": {
             "maxNumFields": null,
             "minNumFields": null,
           },
@@ -16583,48 +16643,6 @@ exports[`getDMMF @@unique model 1`] = `
             },
           ],
           "name": "UserUpdateOneRequiredWithoutPostsNestedInput",
-        },
-        {
-          "constraints": {
-            "maxNumFields": 1,
-            "minNumFields": 1,
-          },
-          "fields": [
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
-                  "location": "scalar",
-                  "type": "String",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "set",
-            },
-          ],
-          "name": "StringFieldUpdateOperationsInput",
-        },
-        {
-          "constraints": {
-            "maxNumFields": 1,
-            "minNumFields": 1,
-          },
-          "fields": [
-            {
-              "inputTypes": [
-                {
-                  "isList": false,
-                  "location": "scalar",
-                  "type": "Boolean",
-                },
-              ],
-              "isNullable": false,
-              "isRequired": false,
-              "name": "set",
-            },
-          ],
-          "name": "BoolFieldUpdateOperationsInput",
         },
         {
           "constraints": {
@@ -18458,6 +18476,12 @@ exports[`getDMMF @@unique model 1`] = `
             {
               "inputTypes": [
                 {
+                  "isList": false,
+                  "location": "inputObjectTypes",
+                  "namespace": "prisma",
+                  "type": "PostCreateManyAuthorInput",
+                },
+                {
                   "isList": true,
                   "location": "inputObjectTypes",
                   "namespace": "prisma",
@@ -19013,17 +19037,6 @@ exports[`getDMMF @@unique model 1`] = `
             {
               "args": [],
               "isNullable": false,
-              "name": "author",
-              "outputType": {
-                "isList": false,
-                "location": "outputObjectTypes",
-                "namespace": "model",
-                "type": "User",
-              },
-            },
-            {
-              "args": [],
-              "isNullable": false,
               "name": "authorId",
               "outputType": {
                 "isList": false,
@@ -19049,6 +19062,17 @@ exports[`getDMMF @@unique model 1`] = `
                 "isList": false,
                 "location": "scalar",
                 "type": "Boolean",
+              },
+            },
+            {
+              "args": [],
+              "isNullable": false,
+              "name": "author",
+              "outputType": {
+                "isList": false,
+                "location": "outputObjectTypes",
+                "namespace": "model",
+                "type": "User",
               },
             },
           ],
@@ -21434,6 +21458,12 @@ exports[`getDMMF @@unique model 1`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "PostCreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -21702,6 +21732,12 @@ exports[`getDMMF @@unique model 1`] = `
               "args": [
                 {
                   "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "UserCreateManyInput",
+                    },
                     {
                       "isList": true,
                       "location": "inputObjectTypes",
@@ -21972,6 +22008,12 @@ exports[`getDMMF @@unique model 1`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "User1CreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -22240,6 +22282,12 @@ exports[`getDMMF @@unique model 1`] = `
               "args": [
                 {
                   "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "User2CreateManyInput",
+                    },
                     {
                       "isList": true,
                       "location": "inputObjectTypes",
@@ -23800,11 +23848,130 @@ exports[`getDMMF @@unique model 1`] = `
 }
 `;
 
-exports[`getDMMF big schema 1`] = `140496894`;
+exports[`getDMMF success big schema read via datamodel path 1`] = `141005228`;
 
-exports[`getDMMF chinook introspected schema 1`] = `903623`;
+exports[`getDMMF success chinook introspected schema 1`] = `905957`;
 
-exports[`getDMMF simple model, mongodb 1`] = `
+exports[`getDMMF success if a datamodel is provided, succeeds even when a non-existing datamodel path is given 2`] = `
+{
+  "datamodel": {
+    "enums": [],
+    "models": [],
+    "types": [],
+  },
+  "mappings": {
+    "modelOperations": [],
+    "otherOperations": {
+      "read": [],
+      "write": [
+        "executeRaw",
+        "queryRaw",
+      ],
+    },
+  },
+  "schema": {
+    "enumTypes": {
+      "prisma": [
+        {
+          "name": "TransactionIsolationLevel",
+          "values": [
+            "Serializable",
+          ],
+        },
+      ],
+    },
+    "fieldRefTypes": {},
+    "inputObjectTypes": {},
+    "outputObjectTypes": {
+      "prisma": [
+        {
+          "fields": [],
+          "name": "Query",
+        },
+        {
+          "fields": [
+            {
+              "args": [
+                {
+                  "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "scalar",
+                      "type": "String",
+                    },
+                  ],
+                  "isNullable": false,
+                  "isRequired": true,
+                  "name": "query",
+                },
+                {
+                  "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "scalar",
+                      "type": "Json",
+                    },
+                  ],
+                  "isNullable": false,
+                  "isRequired": false,
+                  "name": "parameters",
+                },
+              ],
+              "isNullable": false,
+              "name": "executeRaw",
+              "outputType": {
+                "isList": false,
+                "location": "scalar",
+                "type": "Json",
+              },
+            },
+            {
+              "args": [
+                {
+                  "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "scalar",
+                      "type": "String",
+                    },
+                  ],
+                  "isNullable": false,
+                  "isRequired": true,
+                  "name": "query",
+                },
+                {
+                  "inputTypes": [
+                    {
+                      "isList": false,
+                      "location": "scalar",
+                      "type": "Json",
+                    },
+                  ],
+                  "isNullable": false,
+                  "isRequired": false,
+                  "name": "parameters",
+                },
+              ],
+              "isNullable": false,
+              "name": "queryRaw",
+              "outputType": {
+                "isList": false,
+                "location": "scalar",
+                "type": "Json",
+              },
+            },
+          ],
+          "name": "Mutation",
+        },
+      ],
+    },
+  },
+}
+`;
+
+exports[`getDMMF success odoo introspected schema 1`] = `134371111`;
+
+exports[`getDMMF success simple model, mongodb 1`] = `
 {
   "enums": [],
   "models": [
@@ -23812,6 +23979,7 @@ exports[`getDMMF simple model, mongodb 1`] = `
       "dbName": null,
       "fields": [
         {
+          "dbName": "_id",
           "hasDefaultValue": false,
           "isGenerated": false,
           "isId": true,
@@ -23849,7 +24017,7 @@ exports[`getDMMF simple model, mongodb 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, mongodb 2`] = `
+exports[`getDMMF success simple model, mongodb 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -23858,6 +24026,7 @@ exports[`getDMMF simple model, mongodb 2`] = `
         "dbName": null,
         "fields": [
           {
+            "dbName": "_id",
             "hasDefaultValue": false,
             "isGenerated": false,
             "isId": true,
@@ -26779,6 +26948,12 @@ exports[`getDMMF simple model, mongodb 2`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "ACreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -27239,7 +27414,7 @@ exports[`getDMMF simple model, mongodb 2`] = `
 }
 `;
 
-exports[`getDMMF simple model, mysql 1`] = `
+exports[`getDMMF success simple model, mysql 1`] = `
 {
   "enums": [],
   "models": [
@@ -27284,7 +27459,7 @@ exports[`getDMMF simple model, mysql 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, mysql 2`] = `
+exports[`getDMMF success simple model, mysql 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -30260,6 +30435,12 @@ exports[`getDMMF simple model, mysql 2`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "ACreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -30779,7 +30960,7 @@ exports[`getDMMF simple model, mysql 2`] = `
 }
 `;
 
-exports[`getDMMF simple model, no datasource 1`] = `
+exports[`getDMMF success simple model, no datasource 1`] = `
 {
   "enums": [],
   "models": [
@@ -30824,7 +31005,7 @@ exports[`getDMMF simple model, no datasource 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, no datasource 2`] = `
+exports[`getDMMF success simple model, no datasource 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -34025,7 +34206,7 @@ exports[`getDMMF simple model, no datasource 2`] = `
 }
 `;
 
-exports[`getDMMF simple model, postgresql 1`] = `
+exports[`getDMMF success simple model, postgresql 1`] = `
 {
   "enums": [],
   "models": [
@@ -34070,7 +34251,7 @@ exports[`getDMMF simple model, postgresql 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, postgresql 2`] = `
+exports[`getDMMF success simple model, postgresql 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -37079,6 +37260,12 @@ exports[`getDMMF simple model, postgresql 2`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "ACreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -37598,7 +37785,7 @@ exports[`getDMMF simple model, postgresql 2`] = `
 }
 `;
 
-exports[`getDMMF simple model, sql server 1`] = `
+exports[`getDMMF success simple model, sql server 1`] = `
 {
   "enums": [],
   "models": [
@@ -37643,7 +37830,7 @@ exports[`getDMMF simple model, sql server 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, sql server 2`] = `
+exports[`getDMMF success simple model, sql server 2`] = `
 {
   "datamodel": {
     "enums": [],
@@ -40620,6 +40807,12 @@ exports[`getDMMF simple model, sql server 2`] = `
                 {
                   "inputTypes": [
                     {
+                      "isList": false,
+                      "location": "inputObjectTypes",
+                      "namespace": "prisma",
+                      "type": "ACreateManyInput",
+                    },
+                    {
                       "isList": true,
                       "location": "inputObjectTypes",
                       "namespace": "prisma",
@@ -41127,7 +41320,7 @@ exports[`getDMMF simple model, sql server 2`] = `
 }
 `;
 
-exports[`getDMMF simple model, sqlite 1`] = `
+exports[`getDMMF success simple model, sqlite 1`] = `
 {
   "enums": [],
   "models": [
@@ -41172,7 +41365,7 @@ exports[`getDMMF simple model, sqlite 1`] = `
 }
 `;
 
-exports[`getDMMF simple model, sqlite 2`] = `
+exports[`getDMMF success simple model, sqlite 2`] = `
 {
   "datamodel": {
     "enums": [],

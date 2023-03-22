@@ -12,11 +12,11 @@ import {
 } from '../compositeProxy'
 import { createPrismaPromise } from '../request/createPrismaPromise'
 import type { PrismaPromise } from '../request/PrismaPromise'
+import type { UserArgs } from '../request/UserArgs'
 import { applyAggregates } from './applyAggregates'
 import { applyFieldsProxy } from './applyFieldsProxy'
 import { applyFluent } from './applyFluent'
 import { adaptErrors } from './applyOrThrowErrorAdapter'
-import type { UserArgs } from './UserArgs'
 import { dmmfToJSModelName } from './utils/dmmfToJSModelName'
 
 export type ModelAction = (
@@ -42,7 +42,7 @@ const aggregateProps = ['aggregate', 'count', 'groupBy'] as const
  * @returns
  */
 export function applyModel(client: Client, dmmfModelName: string) {
-  const layers: CompositeProxyLayer[] = [modelActionsLayer(client, dmmfModelName)]
+  const layers: CompositeProxyLayer[] = [modelActionsLayer(client, dmmfModelName), modelMetaLayer(dmmfModelName)]
 
   if (client._engineConfig.previewFeatures?.includes('fieldReference')) {
     layers.push(fieldsPropertyLayer(client, dmmfModelName))
@@ -54,6 +54,10 @@ export function applyModel(client: Client, dmmfModelName: string) {
   }
 
   return createCompositeProxy({}, layers)
+}
+
+function modelMetaLayer(dmmfModelName: string): CompositeProxyLayer {
+  return addProperty('name', () => dmmfModelName)
 }
 
 /**
@@ -83,7 +87,7 @@ function modelActionsLayer(client: Client, dmmfModelName: string): CompositeProx
       const action = (paramOverrides: O.Optional<InternalRequestParams>) => (userArgs?: UserArgs) => {
         const callSite = getCallSite(client._errorFormat) // used for showing better errors
 
-        return createPrismaPromise((transaction, lock) => {
+        return createPrismaPromise((transaction) => {
           const params: InternalRequestParams = {
             // data and its dataPath for nested results
             args: userArgs,
@@ -99,7 +103,6 @@ function modelActionsLayer(client: Client, dmmfModelName: string): CompositeProx
 
             // transaction information
             transaction,
-            lock,
 
             // stack trace
             callsite: callSite,
@@ -133,7 +136,7 @@ function getOwnKeys(client: Client, dmmfModelName: string) {
   return actionKeys
 }
 
-function isValidAggregateName(action: string): action is typeof aggregateProps[number] {
+function isValidAggregateName(action: string): action is (typeof aggregateProps)[number] {
   return (aggregateProps as readonly string[]).includes(action)
 }
 

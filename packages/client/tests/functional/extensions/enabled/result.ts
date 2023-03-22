@@ -206,6 +206,55 @@ testMatrix.setupTestSuite(() => {
     expect(user?.loudName).toBe('JOHN SMITH')
   })
 
+  test('shadowing dependency', async () => {
+    const xprisma = prisma.$extends({
+      result: {
+        user: {
+          firstName: {
+            needs: { firstName: true },
+            compute(user) {
+              return user.firstName.toUpperCase()
+            },
+          },
+        },
+      },
+    })
+
+    const user = await xprisma.user.findFirst()
+    expect(user?.firstName).toBe('JOHN')
+  })
+
+  test('shadowing dependency multiple times', async () => {
+    const xprisma = prisma
+      .$extends({
+        result: {
+          user: {
+            firstName: {
+              needs: { firstName: true },
+              compute(user) {
+                return user.firstName.toUpperCase()
+              },
+            },
+          },
+        },
+      })
+      .$extends({
+        result: {
+          user: {
+            firstName: {
+              needs: { firstName: true },
+              compute(user) {
+                return `${user.firstName}!!!`
+              },
+            },
+          },
+        },
+      })
+
+    const user = await xprisma.user.findFirst()
+    expect(user?.firstName).toBe('JOHN!!!')
+  })
+
   test('empty extension does nothing', async () => {
     const xprisma = prismaWithExtension()
       .$extends({
@@ -244,9 +293,7 @@ testMatrix.setupTestSuite(() => {
     })
 
     const user = await xprisma.user.findFirstOrThrow({})
-    expect(() => user.fullName).toThrowErrorMatchingInlineSnapshot(
-      `Error caused by extension "Faulty extension": oops!`,
-    )
+    expect(() => user.fullName).toThrowErrorMatchingInlineSnapshot(`oops!`)
   })
 
   test('error in computed field with no name', async () => {
@@ -264,6 +311,42 @@ testMatrix.setupTestSuite(() => {
     })
 
     const user = await xprisma.user.findFirstOrThrow({})
-    expect(() => user.fullName).toThrowErrorMatchingInlineSnapshot(`Error caused by an extension: oops!`)
+    expect(() => user.fullName).toThrowErrorMatchingInlineSnapshot(`oops!`)
+  })
+
+  test('nested includes should include scalars and relations', async () => {
+    const xprisma = prisma.$extends({
+      result: {
+        user: {
+          fullName: {
+            needs: { firstName: true, lastName: true },
+            compute(user) {
+              return `${user.firstName} ${user.lastName}`
+            },
+          },
+        },
+      },
+    })
+
+    const user = await xprisma.user.findFirstOrThrow({
+      include: {
+        posts: {
+          where: {}, // testing with where as it caused issues
+          include: {
+            user: {
+              include: {
+                posts: true,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    expectTypeOf(user.id).toEqualTypeOf<string>()
+    expectTypeOf(user.posts[0].id).toEqualTypeOf<string>()
+    expectTypeOf(user.posts[0].user.id).toEqualTypeOf<string>()
+    expectTypeOf(user.posts[0].user.posts[0].id).toEqualTypeOf<string>()
+    expectTypeOf(user.posts[0].user.posts[0]).not.toHaveProperty('user')
   })
 })

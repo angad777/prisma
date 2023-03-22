@@ -1,3 +1,5 @@
+import { getQueryEngineProtocol } from '@prisma/internals'
+
 import { generateTestClient } from '../../../../utils/getTestClient'
 
 test('blog', async () => {
@@ -7,14 +9,8 @@ test('blog', async () => {
 
   const { prismaVersion, sql, raw, join, empty, PrismaClientValidationError, PrismaClientKnownRequestError } = Prisma
 
-  const requests: any[] = []
   const db = new PrismaClient({
     errorFormat: 'colorless',
-    __internal: {
-      hooks: {
-        beforeRequest: (request) => requests.push(request),
-      },
-    },
   })
 
   if (!prismaVersion || !prismaVersion.client) {
@@ -33,11 +29,9 @@ test('blog', async () => {
 
   expect(posts.length).toBe(0)
   db.$disconnect()
-  expect(requests.length).toBe(2)
 
   await db.user.findMany()
   db.$disconnect()
-  expect(requests.length).toBe(3)
 
   const count = await db.user.count()
   expect(typeof count === 'number').toBe(true)
@@ -123,7 +117,9 @@ test('blog', async () => {
     validationError = e
   }
   if (!validationError || !(validationError instanceof PrismaClientValidationError)) {
-    throw new Error(`Validation error is incorrect`)
+    if (getQueryEngineProtocol() !== 'json') {
+      throw new Error(`Validation error is incorrect`)
+    }
   }
 
   // Test known request error

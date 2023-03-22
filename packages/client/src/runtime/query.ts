@@ -31,7 +31,7 @@ import {
   wrapWithList,
 } from './utils/common'
 import { createErrorMessageWithContext } from './utils/createErrorMessageWithContext'
-import { isDecimalJsLike, stringifyDecimalJsLike } from './utils/decimalJsLike'
+import { isDecimalJsLike } from './utils/decimalJsLike'
 import { deepExtend } from './utils/deep-extend'
 import { deepGet } from './utils/deep-set'
 import { filterObject } from './utils/filterObject'
@@ -248,7 +248,6 @@ ${fieldErrors.map((e) => this.printFieldError(e, missingItems, errorFormat === '
 
     const error = new PrismaClientValidationError(renderErrorStr(validationCallsite))
 
-    // @ts-ignore
     if (process.env.NODE_ENV !== 'production') {
       Object.defineProperty(error, 'render', {
         get: () => renderErrorStr,
@@ -643,7 +642,7 @@ function stringify(value: any, inputType?: DMMF.SchemaArgInputType) {
   }
 
   if (Decimal.isDecimal(value) || (inputType?.type === 'Decimal' && isDecimalJsLike(value))) {
-    return stringifyDecimalJsLike(value)
+    return JSON.stringify(value.toFixed())
   }
 
   if (inputType?.location === 'enumTypes' && typeof value === 'string') {
@@ -851,17 +850,15 @@ export function selectionToFields({
   return Object.entries(selection).reduce((acc, [name, value]: any) => {
     const field = outputType.fieldMap ? outputType.fieldMap[name] : outputType.fields.find((f) => f.name === name)
 
-    if (computedFields?.[name]) {
-      return acc
-    }
-
     if (!field) {
+      if (computedFields?.[name]) {
+        return acc
+      }
       // if the field name is incorrect, we ignore the args and child fields altogether
       acc.push(
         new Field({
           name,
           children: [],
-          // @ts-ignore
           error: {
             type: 'invalidFieldName',
             modelName: outputType.name,
@@ -992,7 +989,6 @@ export function selectionToFields({
                         },
                       }),
                     ],
-                    // @ts-ignore
                   }),
               ),
             )
@@ -1363,7 +1359,7 @@ function tryInferArgs(
   const { isNullable, isRequired } = arg
 
   if (value === null && !isNullable && !isRequired) {
-    // we don't need to execute this ternery if not necessary
+    // we don't need to execute this ternary if not necessary
     const isAtLeastOne = isInputArgType(inputType.type)
       ? inputType.type.constraints.minNumFields !== null && inputType.type.constraints.minNumFields > 0
       : false

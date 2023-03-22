@@ -1,42 +1,5 @@
-import { DMMF } from '@prisma/generator-helper'
-
-import { BaseDMMFHelper } from '../../dmmf'
+import { baseDmmf, field, model } from '../../utils/datmodelBuilder'
 import { visitQueryResult } from './visitQueryResult'
-
-function field(kind: DMMF.FieldKind, name: string, type: string, extra?: Partial<DMMF.Field>): DMMF.Field {
-  return {
-    kind,
-    name,
-    type,
-    isRequired: false,
-    isList: false,
-    isUnique: true,
-    isId: true,
-    isReadOnly: false,
-    hasDefaultValue: false,
-    ...extra,
-  }
-}
-
-function model(name: string, fields: DMMF.Field[]): DMMF.Model {
-  return {
-    name,
-    dbName: null,
-    fields: [
-      field('scalar', 'id', 'String', {
-        isUnique: true,
-        isId: true,
-      }),
-      ...fields,
-    ],
-    uniqueFields: [],
-    uniqueIndexes: [],
-    primaryKey: {
-      name: 'id',
-      fields: ['id'],
-    },
-  }
-}
 
 const UserModel = model('User', [
   field('scalar', 'name', 'String'),
@@ -58,19 +21,8 @@ const PostModel = model('Post', [
   }),
 ])
 
-const dmmf = new BaseDMMFHelper({
-  datamodel: {
-    models: [UserModel, GroupModel, PostModel],
-    enums: [],
-    types: [],
-  },
-  mappings: {
-    modelOperations: [],
-    otherOperations: {
-      read: [],
-      write: [],
-    },
-  },
+const dmmf = baseDmmf({
+  models: [UserModel, GroupModel, PostModel],
 })
 
 test('visits root node', () => {
@@ -134,9 +86,9 @@ test('in case of array, visits each item individually', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledTimes(2)
-  expect(visitor).toBeCalledWith(result[0], UserModel, {})
-  expect(visitor).toBeCalledWith(result[1], UserModel, {})
+  expect(visitor).toHaveBeenCalledTimes(2)
+  expect(visitor).toHaveBeenCalledWith(result[0], UserModel, {})
+  expect(visitor).toHaveBeenCalledWith(result[1], UserModel, {})
 })
 
 test('allows to modify individual array items', () => {
@@ -185,8 +137,8 @@ test('visits nested relations when using include', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledWith(result, UserModel, { include: { group: true } })
-  expect(visitor).toBeCalledWith(result.group, GroupModel, {})
+  expect(visitor).toHaveBeenCalledWith(result, UserModel, { include: { group: true } })
+  expect(visitor).toHaveBeenCalledWith(result.group, GroupModel, {})
 })
 
 test('visits nested relations when using select', () => {
@@ -209,8 +161,8 @@ test('visits nested relations when using select', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledWith(result, UserModel, { select: { group: true } })
-  expect(visitor).toBeCalledWith(result.group, GroupModel, {})
+  expect(visitor).toHaveBeenCalledWith(result, UserModel, { select: { group: true } })
+  expect(visitor).toHaveBeenCalledWith(result.group, GroupModel, {})
 })
 
 test('does not visit nested nested relations when include = false', () => {
@@ -286,9 +238,9 @@ test('visits deeply nested relations using include', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledWith(result, PostModel, { include: { author: { include: { group: true } } } })
-  expect(visitor).toBeCalledWith(result.author, UserModel, { include: { group: true } })
-  expect(visitor).toBeCalledWith(result.author.group, GroupModel, {})
+  expect(visitor).toHaveBeenCalledWith(result, PostModel, { include: { author: { include: { group: true } } } })
+  expect(visitor).toHaveBeenCalledWith(result.author, UserModel, { include: { group: true } })
+  expect(visitor).toHaveBeenCalledWith(result.author.group, GroupModel, {})
 })
 
 test('visits deeply nested relations using select', () => {
@@ -318,9 +270,9 @@ test('visits deeply nested relations using select', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledWith(result, PostModel, { select: { author: { select: { group: true } } } })
-  expect(visitor).toBeCalledWith(result.author, UserModel, { select: { group: true } })
-  expect(visitor).toBeCalledWith(result.author.group, GroupModel, {})
+  expect(visitor).toHaveBeenCalledWith(result, PostModel, { select: { author: { select: { group: true } } } })
+  expect(visitor).toHaveBeenCalledWith(result.author, UserModel, { select: { group: true } })
+  expect(visitor).toHaveBeenCalledWith(result.author.group, GroupModel, {})
 })
 
 test('visits deeply nested relations with mixed include and select', () => {
@@ -350,9 +302,9 @@ test('visits deeply nested relations with mixed include and select', () => {
     visitor,
   })
 
-  expect(visitor).toBeCalledWith(result, PostModel, { include: { author: { select: { group: true } } } })
-  expect(visitor).toBeCalledWith(result.author, UserModel, { select: { group: true } })
-  expect(visitor).toBeCalledWith(result.author.group, GroupModel, {})
+  expect(visitor).toHaveBeenCalledWith(result, PostModel, { include: { author: { select: { group: true } } } })
+  expect(visitor).toHaveBeenCalledWith(result.author, UserModel, { select: { group: true } })
+  expect(visitor).toHaveBeenCalledWith(result.author.group, GroupModel, {})
 })
 
 test('allows to replace deeply nested relations using include', () => {

@@ -95,7 +95,7 @@ describe('generatorHandler', () => {
         },
         "prettyName": "This is a pretty name",
         "requiresEngines": [
-          "introspection-engine",
+          "migration-engine",
           "query-engine",
         ],
         "requiresGenerators": [
@@ -117,7 +117,7 @@ describe('generatorHandler', () => {
   })
 
   test('nonexistent executable', async () => {
-    const generator = new GeneratorProcess(getExecutable('random path that doesnt exist'))
+    const generator = new GeneratorProcess(getExecutable("random path that doesn't exist"))
     await expect(() => generator.init()).rejects.toThrow()
   })
 })

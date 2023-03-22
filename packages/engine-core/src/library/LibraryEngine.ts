@@ -8,8 +8,11 @@ import fs from 'fs'
 import type {
   BatchQueryEngineResult,
   DatasourceOverwrite,
+  EngineBatchQueries,
   EngineConfig,
   EngineEventType,
+  EngineProtocol,
+  EngineQuery,
   RequestBatchOptions,
   RequestOptions,
 } from '../common/Engine'
@@ -24,19 +27,17 @@ import { prismaGraphQLToJSError } from '../common/errors/utils/prismaGraphQLToJS
 import { EventEmitter } from '../common/types/Events'
 import { EngineMetricsOptions, Metrics, MetricsOptionsJson, MetricsOptionsPrometheus } from '../common/types/Metrics'
 import type {
-  ConfigMetaFormat,
   EngineSpanEvent,
-  QueryEngineBatchRequest,
   QueryEngineEvent,
   QueryEngineLogLevel,
   QueryEnginePanicEvent,
   QueryEngineQueryEvent,
-  QueryEngineRequest,
-  QueryEngineResult,
   RustRequestError,
   SyncRustError,
 } from '../common/types/QueryEngine'
 import type * as Tx from '../common/types/Transaction'
+import { getBatchRequestPayload } from '../common/utils/getBatchRequestPayload'
+import { getInteractiveTransactionId } from '../common/utils/getInteractiveTransactionId'
 import { createSpan, getTraceParent, runInChildSpan } from '../tracing'
 import { DefaultLibraryLoader } from './DefaultLibraryLoader'
 import { type BeforeExitListener, ExitHooks } from './ExitHooks'
@@ -59,7 +60,7 @@ const knownPlatforms: Platform[] = [...platforms, 'native']
 let engineInstanceCount = 0
 const exitHooks = new ExitHooks()
 
-export class LibraryEngine extends Engine {
+export class LibraryEngine extends Engine<undefined> {
   private engine?: QueryEngineInstance
   private libraryInstantiationPromise?: Promise<void>
   private libraryStartingPromise?: Promise<void>
@@ -71,6 +72,7 @@ export class LibraryEngine extends Engine {
   private libraryLoader: LibraryLoader
   private library?: Library
   private logEmitter: EventEmitter
+  private engineProtocol: EngineProtocol
   libQueryEnginePath?: string
   platform?: Platform
   datasourceOverrides: Record<string, string>
@@ -96,13 +98,28 @@ export class LibraryEngine extends Engine {
   constructor(config: EngineConfig, loader: LibraryLoader = new DefaultLibraryLoader(config)) {
     super()
 
-    this.datamodel = fs.readFileSync(config.datamodelPath, 'utf-8')
+    try {
+      // we try to handle the case where the datamodel is not found
+      this.datamodel = fs.readFileSync(config.datamodelPath, 'utf-8')
+    } catch (e) {
+      if ((e.stack as string).match(/\/\.next|\/next@|\/next\//)) {
+        throw new PrismaClientInitializationError(
+          `Your schema.prisma could not be found, and we detected that you are using Next.js.
+Find out why and learn how to fix this: https://pris.ly/d/schema-not-found-nextjs`,
+          config.clientVersion!,
+        )
+      }
+
+      throw e
+    }
+
     this.config = config
     this.libraryStarted = false
     this.logQueries = config.logQueries ?? false
     this.logLevel = config.logLevel ?? 'error'
     this.libraryLoader = loader
     this.logEmitter = config.logEmitter
+    this.engineProtocol = config.engineProtocol
     this.datasourceOverrides = config.datasources ? this.convertDatasources(config.datasources) : {}
     if (config.enableDebugLogs) {
       this.logLevel = 'debug'
@@ -121,9 +138,21 @@ export class LibraryEngine extends Engine {
     }
   }
 
-  async transaction(action: 'start', headers: Tx.TransactionHeaders, options?: Tx.Options): Promise<Tx.Info<undefined>>
-  async transaction(action: 'commit', headers: Tx.TransactionHeaders, info: Tx.Info<undefined>): Promise<undefined>
-  async transaction(action: 'rollback', headers: Tx.TransactionHeaders, info: Tx.Info<undefined>): Promise<undefined>
+  async transaction(
+    action: 'start',
+    headers: Tx.TransactionHeaders,
+    options?: Tx.Options,
+  ): Promise<Tx.InteractiveTransactionInfo<undefined>>
+  async transaction(
+    action: 'commit',
+    headers: Tx.TransactionHeaders,
+    info: Tx.InteractiveTransactionInfo<undefined>,
+  ): Promise<undefined>
+  async transaction(
+    action: 'rollback',
+    headers: Tx.TransactionHeaders,
+    info: Tx.InteractiveTransactionInfo<undefined>,
+  ): Promise<undefined>
   async transaction(action: any, headers: Tx.TransactionHeaders, arg?: any) {
     await this.start()
 
@@ -154,7 +183,7 @@ export class LibraryEngine extends Engine {
       })
     }
 
-    return response as Tx.Info<undefined> | undefined
+    return response as Tx.InteractiveTransactionInfo<undefined> | undefined
   }
 
   private async instantiateLibrary(): Promise<void> {
@@ -227,10 +256,11 @@ You may have to run ${chalk.greenBright('prisma generate')} for your changes to 
             datamodel: this.datamodel,
             env: process.env,
             logQueries: this.config.logQueries ?? false,
-            ignoreEnvVarErrors: false,
+            ignoreEnvVarErrors: true,
             datasourceOverrides: this.datasourceOverrides,
             logLevel: this.logLevel,
-            configDir: this.config.cwd!,
+            configDir: this.config.cwd,
+            engineProtocol: this.engineProtocol,
           },
           (log) => {
             weakThis.deref()?.logger(log)
@@ -418,21 +448,15 @@ You may have to run ${chalk.greenBright('prisma generate')} for your changes to 
     return this.libraryStoppingPromise
   }
 
-  async getConfig(): Promise<ConfigMetaFormat> {
-    await this.libraryInstantiationPromise
-
-    return this.library!.getConfig({
-      datamodel: this.datamodel,
-      datasourceOverrides: this.datasourceOverrides,
-      ignoreEnvVarErrors: true,
-      env: process.env,
-    })
-  }
-
   async getDmmf(): Promise<DMMF.Document> {
-    await this.libraryInstantiationPromise
+    await this.start()
 
-    return JSON.parse(await this.library!.dmmf(this.datamodel))
+    const traceparent = getTraceParent({ tracingConfig: this.config.tracingConfig })
+    const response = await this.engine!.dmmf(JSON.stringify({ traceparent }))
+
+    return runInChildSpan({ name: 'parseDmmf', enabled: this.config.tracingConfig.enabled, internal: true }, () =>
+      JSON.parse(response),
+    )
   }
 
   version(): string {
@@ -446,15 +470,17 @@ You may have to run ${chalk.greenBright('prisma generate')} for your changes to 
     return this.library?.debugPanic(message) as Promise<never>
   }
 
-  async request<T>({ query, headers = {} }: RequestOptions<undefined>): Promise<{ data: T; elapsed: number }> {
+  async request<T>(
+    query: EngineQuery,
+    { traceparent, interactiveTransaction }: RequestOptions<undefined>,
+  ): Promise<{ data: T; elapsed: number }> {
     debug(`sending request, this.libraryStarted: ${this.libraryStarted}`)
-    const request: QueryEngineRequest = { query, variables: {} }
-    const headerStr = JSON.stringify(headers) // object equivalent to http headers for the library
-    const queryStr = JSON.stringify(request)
+    const headerStr = JSON.stringify({ traceparent }) // object equivalent to http headers for the library
+    const queryStr = JSON.stringify(query)
 
     try {
       await this.start()
-      this.executingQueryPromise = this.engine?.query(queryStr, headerStr, headers.transactionId)
+      this.executingQueryPromise = this.engine?.query(queryStr, headerStr, interactiveTransaction?.id)
 
       this.lastQuery = queryStr
       const data = this.parseEngineResponse<any>(await this.executingQueryPromise)
@@ -490,21 +516,20 @@ You may have to run ${chalk.greenBright('prisma generate')} for your changes to 
     }
   }
 
-  async requestBatch<T>({
-    queries,
-    headers = {},
-    transaction,
-  }: RequestBatchOptions): Promise<BatchQueryEngineResult<T>[]> {
+  async requestBatch<T>(
+    queries: EngineBatchQueries,
+    { transaction, traceparent }: RequestBatchOptions<undefined>,
+  ): Promise<BatchQueryEngineResult<T>[]> {
     debug('requestBatch')
-    const request: QueryEngineBatchRequest = {
-      batch: queries.map((query) => ({ query, variables: {} })),
-      transaction: Boolean(transaction),
-      isolationLevel: transaction?.isolationLevel,
-    }
+    const request = getBatchRequestPayload(queries, transaction)
     await this.start()
 
     this.lastQuery = JSON.stringify(request)
-    this.executingQueryPromise = this.engine!.query(this.lastQuery, JSON.stringify(headers), headers.transactionId)
+    this.executingQueryPromise = this.engine!.query(
+      this.lastQuery,
+      JSON.stringify({ traceparent }),
+      getInteractiveTransactionId(transaction),
+    )
     const result = await this.executingQueryPromise
     const data = this.parseEngineResponse<any>(result)
 

@@ -1,3 +1,5 @@
+import { expectTypeOf } from 'expect-type'
+
 import testMatrix from './_matrix'
 // @ts-ignore
 import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
@@ -57,7 +59,11 @@ testMatrix.setupTestSuite(() => {
       client: {
         $extMethod1,
         $extMethod2() {
-          this.$extMethod1()
+          const ctx = Prisma.getExtensionContext(this)
+
+          expectTypeOf(ctx).toHaveProperty('$extMethod1').toEqualTypeOf($extMethod1)
+
+          ctx.$extMethod1()
         },
       },
     })
@@ -136,6 +142,8 @@ testMatrix.setupTestSuite(() => {
           $extMethod2() {
             const ctx = Prisma.getExtensionContext(this)
 
+            expectTypeOf(ctx).toHaveProperty('$extMethod1').toEqualTypeOf($extMethod1)
+
             ctx.$extMethod1()
           },
         },
@@ -151,6 +159,8 @@ testMatrix.setupTestSuite(() => {
       client: {
         $findAllUsers() {
           const ctx = Prisma.getExtensionContext(this)
+
+          expectTypeOf(ctx).toHaveProperty('user').toHaveProperty('findMany').toMatchTypeOf<Function>()
 
           return ctx.user.findMany({})
         },
@@ -198,9 +208,7 @@ testMatrix.setupTestSuite(() => {
       },
     })
 
-    expect(() => xprisma.$fail()).toThrowErrorMatchingInlineSnapshot(
-      `Error caused by extension "Faulty client extension": What a terrible failure`,
-    )
+    expect(() => xprisma.$fail()).toThrowErrorMatchingInlineSnapshot(`What a terrible failure`)
   })
 
   test('error in async extension method', async () => {
@@ -213,9 +221,7 @@ testMatrix.setupTestSuite(() => {
       },
     })
 
-    await expect(() => xprisma.$fail()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `Error caused by extension "Faulty async extension": What a terrible failure`,
-    )
+    await expect(() => xprisma.$fail()).rejects.toThrowErrorMatchingInlineSnapshot(`What a terrible failure`)
   })
 
   test('error in extension method with no name', () => {
@@ -227,8 +233,22 @@ testMatrix.setupTestSuite(() => {
       },
     })
 
-    expect(() => xprisma.$fail()).toThrowErrorMatchingInlineSnapshot(
-      `Error caused by an extension: What a terrible failure`,
-    )
+    expect(() => xprisma.$fail()).toThrowErrorMatchingInlineSnapshot(`What a terrible failure`)
+  })
+
+  test('custom method re-using input to augment', () => {
+    const xprisma = prisma.$extends({
+      client: {
+        $executeRawCustom<T, A extends any[]>(
+          this: T,
+          ...args: PrismaNamespace.Exact<A, [...PrismaNamespace.Args<T, '$executeRaw'>, { extra: boolean }]>
+        ): PrismaNamespace.Result<T, A, '$executeRaw'> {
+          return {} as any
+        },
+      },
+    })
+
+    // @ts-test-if: provider !== 'mongodb'
+    xprisma.$executeRawCustom(Prisma.sql`SELECT * FROM User`, { extra: true })
   })
 })

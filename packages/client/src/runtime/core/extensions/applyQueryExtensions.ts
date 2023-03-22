@@ -2,23 +2,25 @@ import { klona } from 'klona'
 
 import { Client, InternalRequestParams } from '../../getPrismaClient'
 import { createPrismaPromise } from '../request/createPrismaPromise'
-import { RequiredArgs } from './$extends'
+import { QueryOptionsCb } from './$extends'
 
 function iterateAndCallQueryCallbacks(
   client: Client,
   params: InternalRequestParams,
-  queryCbs: RequiredArgs['query'][string][string][],
+  queryCbs: QueryOptionsCb[],
   i = 0,
 ) {
-  if (queryCbs.length === 0) return client._executeRequest(params)
+  return createPrismaPromise((transaction) => {
+    // we need to keep track of the previous customDataProxyFetch
+    const prevCustomFetch = params.customDataProxyFetch ?? ((f) => f)
 
-  return createPrismaPromise((transaction, lock) => {
     // allow query extensions to re-wrap in transactions
     // this will automatically discard the prev batch tx
     if (transaction !== undefined) {
-      void params.lock?.then() // discard previous lock
+      if (params.transaction?.kind === 'batch') {
+        void params.transaction.lock.then() // discard
+      }
       params.transaction = transaction
-      params.lock = lock // assign newly acquired lock
     }
 
     // if we are done recursing, we execute the request
@@ -29,23 +31,34 @@ function iterateAndCallQueryCallbacks(
     // if not, call the next query cb and recurse query
     return queryCbs[i]({
       model: params.model,
-      operation: params.action,
+      operation: params.model ? params.action : params.clientMethod,
       args: klona(params.args ?? {}),
-      query: (args) => {
-        params.args = args
-        return iterateAndCallQueryCallbacks(client, params, queryCbs, i + 1)
+      // @ts-expect-error because not part of public API
+      __internalParams: params,
+      query: (args, __internalParams = params) => {
+        // we need to keep track of the current customDataProxyFetch
+        // this is to cascade customDataProxyFetch like a middleware
+        const currCustomFetch = __internalParams.customDataProxyFetch ?? ((f) => f)
+        __internalParams.customDataProxyFetch = (f) => prevCustomFetch(currCustomFetch(f))
+        __internalParams.args = args
+
+        return iterateAndCallQueryCallbacks(client, __internalParams, queryCbs, i + 1)
       },
     })
   })
 }
 
-export function applyQueryExtensions(client: Client, params: InternalRequestParams) {
-  const { jsModelName, action } = params
+export function applyQueryExtensions(client: Client, params: InternalRequestParams): Promise<any> {
+  const { jsModelName, action, clientMethod } = params
+  const operation = jsModelName ? action : clientMethod
 
-  // query extensions only apply to model-bound operations (for now)
-  if (jsModelName === undefined || client._extensions.isEmpty()) {
+  // query extensions only apply to model-bound operations
+  if (client._extensions.isEmpty()) {
     return client._executeRequest(params)
   }
 
-  return iterateAndCallQueryCallbacks(client, params, client._extensions.getAllQueryCallbacks(jsModelName, action))
+  // get the cached query cbs for a given model and action
+  const cbs = client._extensions.getAllQueryCallbacks(jsModelName ?? '*', operation)
+
+  return iterateAndCallQueryCallbacks(client, params, cbs)
 }

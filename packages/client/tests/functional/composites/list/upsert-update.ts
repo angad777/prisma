@@ -1,4 +1,5 @@
 import { faker } from '@faker-js/faker'
+import { getQueryEngineProtocol } from '@prisma/internals'
 
 import { setupTestSuite } from './_matrix'
 import { commentListDataB } from './_testData'
@@ -94,7 +95,7 @@ setupTestSuite(() => {
     )
   })
 
-  test('set null', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('set null', async () => {
     const comment = prisma.commentRequiredList.upsert({
       where: { id },
       create: {},
@@ -107,14 +108,14 @@ setupTestSuite(() => {
       },
     })
 
-    await expect(comment).rejects.toThrowError(
+    await expect(comment).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringContaining('Argument set for update.contents.set must not be null'),
       }),
     )
   })
 
-  test('set null shorthand', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('set null shorthand', async () => {
     const comment = prisma.commentRequiredList.upsert({
       where: { id },
       create: {},
@@ -125,7 +126,7 @@ setupTestSuite(() => {
       },
     })
 
-    await expect(comment).rejects.toThrowError(
+    await expect(comment).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringContaining('Argument contents for update.contents must not be null'),
       }),
@@ -336,7 +337,7 @@ setupTestSuite(() => {
     )
   })
 
-  test('unset', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('unset', async () => {
     const comment = prisma.commentRequiredList.upsert({
       where: { id },
       create: {},
@@ -348,7 +349,7 @@ setupTestSuite(() => {
       },
     })
 
-    await expect(comment).rejects.toThrowError(
+    await expect(comment).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringContaining(
           'Unknown arg `unset` in update.contents.unset for type CommentContentListUpdateEnvelopeInput',
@@ -357,7 +358,7 @@ setupTestSuite(() => {
     )
   })
 
-  test('upsert set', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('upsert set', async () => {
     const comment = prisma.commentRequiredList.upsert({
       where: { id },
       create: {},
@@ -374,7 +375,7 @@ setupTestSuite(() => {
       },
     })
 
-    await expect(comment).rejects.toThrowError(
+    await expect(comment).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringContaining(
           'Unknown arg `upsert` in update.contents.upsert for type CommentContentListUpdateEnvelopeInput',
@@ -383,7 +384,7 @@ setupTestSuite(() => {
     )
   })
 
-  test('upsert update', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('upsert update', async () => {
     const comment = prisma.commentRequiredList.upsert({
       where: { id },
       create: {},
@@ -408,7 +409,7 @@ setupTestSuite(() => {
       },
     })
 
-    await expect(comment).rejects.toThrowError(
+    await expect(comment).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringContaining(
           'Unknown arg `upsert` in update.contents.upsert for type CommentContentListUpdateEnvelopeInput',

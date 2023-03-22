@@ -33,7 +33,8 @@ import {
   Debug,
   objectEnumValues,
   makeStrictEnum,
-  Extensions
+  Extensions,
+  findSync
 } from '${runtimeDir}/edge-esm.js'`
     : browser
     ? `
@@ -61,7 +62,8 @@ const {
   Debug,
   objectEnumValues,
   makeStrictEnum,
-  Extensions
+  Extensions,
+  findSync
 } = require('${runtimeDir}/${runtimeName}')
 `
 }
@@ -131,14 +133,14 @@ In case this error is unexpected for you, please report it in https://github.com
 
 export const commonCodeTS = ({ runtimeDir, runtimeName, clientVersion, engineVersion }: TSClientOptions) => ({
   tsWithoutNamespace: () => `import * as runtime from '${runtimeDir}/${runtimeName}';
-declare const prisma: unique symbol
-export type PrismaPromise<A> = Promise<A> & {[prisma]: true}
 type UnwrapPromise<P extends any> = P extends Promise<infer R> ? R : P
 type UnwrapTuple<Tuple extends readonly unknown[]> = {
-  [K in keyof Tuple]: K extends \`\$\{number\}\` ? Tuple[K] extends PrismaPromise<infer X> ? X : UnwrapPromise<Tuple[K]> : UnwrapPromise<Tuple[K]>
+  [K in keyof Tuple]: K extends \`\$\{number\}\` ? Tuple[K] extends Prisma.PrismaPromise<infer X> ? X : UnwrapPromise<Tuple[K]> : UnwrapPromise<Tuple[K]>
 };
 `,
-  ts: (hideFetcher?: boolean) => `export import DMMF = runtime.DMMF
+  ts: () => `export import DMMF = runtime.DMMF
+
+export type PrismaPromise<T> = runtime.Types.Public.PrismaPromise<T>
 
 /**
  * Prisma Errors
@@ -178,8 +180,12 @@ ${ifExtensions(
   `/**
 * Extensions
 */
-export type Extension = runtime.Types.Extensions.Args
+export type Extension = runtime.Types.Extensions.UserArgs
 export import getExtensionContext = runtime.Extensions.getExtensionContext
+export type Args<T, F extends runtime.Types.Public.Operation> = runtime.Types.Public.Args<T, F>
+export type Payload<T, F extends runtime.Types.Public.Operation> = runtime.Types.Public.Payload<T, F>
+export type Result<T, A, F extends runtime.Types.Public.Operation> = runtime.Types.Public.Result<T, A, F>
+export type Exact<T, W> = runtime.Types.Public.Exact<T, W>
 
 `,
   '',
@@ -520,19 +526,11 @@ export type Or<B1 extends Boolean, B2 extends Boolean> = {
 
 export type Keys<U extends Union> = U extends unknown ? keyof U : never
 
-type Exact<A, W = unknown> = 
-W extends unknown ? A extends Narrowable ? Cast<A, W> : Cast<
-{[K in keyof A]: K extends keyof W ? Exact<A[K], W[K]> : never},
-{[K in keyof W]: K extends keyof A ? Exact<A[K], W[K]> : W[K]}>
-: never;
-
-type Narrowable = string | number | boolean | bigint;
-
 type Cast<A, B> = A extends B ? A : B;
 
 export const type: unique symbol;
 
-export function validator<V>(): <S>(select: Exact<S, V>) => S;
+export function validator<V>(): <S>(select: runtime.Types.Utils.LegacyExact<S, V>) => S;
 
 /**
  * Used by group by
@@ -587,19 +585,6 @@ export type FieldRef<Model, FieldType> = runtime.FieldRef<Model, FieldType>
 
 type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRef<Model, FieldType>
 
-${
-  !hideFetcher
-    ? `class PrismaClientFetcher {
-  private readonly prisma;
-  private readonly debug;
-  private readonly hooks?;
-  constructor(prisma: PrismaClient<any, any>, debug?: boolean, hooks?: Hooks | undefined);
-  request<T>(document: any, dataPath?: string[], rootField?: string, typeName?: string, isList?: boolean, callsite?: string): Promise<T>;
-  sanitizeMessage(message: string): string;
-  protected unpack(document: any, data: any, path: string[], rootField?: string, isList?: boolean): any;
-}`
-    : ''
-}
 `,
 })
 

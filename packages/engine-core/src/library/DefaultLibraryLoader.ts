@@ -1,17 +1,25 @@
 import Debug from '@prisma/debug'
 import { getEnginesPath } from '@prisma/engines'
-import { getNodeAPIName, getPlatform, Platform } from '@prisma/get-platform'
+import type { Platform } from '@prisma/get-platform'
+import { getNodeAPIName, getPlatform, getPlatformWithOSResult } from '@prisma/get-platform'
 import chalk from 'chalk'
 import fs from 'fs'
 import path from 'path'
 
 import { EngineConfig } from '../common/Engine'
 import { PrismaClientInitializationError } from '../common/errors/PrismaClientInitializationError'
+import { handleLibraryLoadingErrors } from '../common/errors/utils/handleEngineLoadingErrors'
 import { printGeneratorConfig } from '../common/utils/printGeneratorConfig'
 import { fixBinaryTargets } from '../common/utils/util'
+import { runInChildSpan } from '../tracing'
 import { Library, LibraryLoader } from './types/Library'
 
 const debug = Debug('prisma:client:libraryEngine:loader')
+
+export function load<T>(id: string): T {
+  // this require needs to be resolved at runtime, tell webpack to ignore it
+  return eval('require')(id) as T
+}
 
 export class DefaultLibraryLoader implements LibraryLoader {
   private config: EngineConfig
@@ -23,38 +31,30 @@ export class DefaultLibraryLoader implements LibraryLoader {
   }
 
   async loadLibrary(): Promise<Library> {
+    const platformInfo = await getPlatformWithOSResult()
+    this.platform = platformInfo.binaryTarget
     if (!this.libQueryEnginePath) {
       this.libQueryEnginePath = await this.getLibQueryEnginePath()
     }
 
     debug(`loadEngine using ${this.libQueryEnginePath}`)
     try {
-      // this require needs to be resolved at runtime, tell webpack to ignore it
-      return eval('require')(this.libQueryEnginePath) as Library
+      const enginePath = this.libQueryEnginePath
+      return runInChildSpan({ name: 'loadLibrary', enabled: this.config.tracingConfig.enabled, internal: true }, () =>
+        load(enginePath),
+      )
     } catch (e) {
-      if (fs.existsSync(this.libQueryEnginePath)) {
-        if (this.libQueryEnginePath.endsWith('.node')) {
-          throw new PrismaClientInitializationError(
-            `Unable to load Node-API Library from ${chalk.dim(this.libQueryEnginePath)}, Library may be corrupt: ${e.message}`,
-            this.config.clientVersion!,
-          )
-        } else {
-          throw new PrismaClientInitializationError(
-            `Expected an Node-API Library but received ${chalk.dim(this.libQueryEnginePath)}`,
-            this.config.clientVersion!,
-          )
-        }
-      } else {
-        throw new PrismaClientInitializationError(
-          `Unable to load Node-API Library from ${chalk.dim(this.libQueryEnginePath)}, It does not exist`,
-          this.config.clientVersion!,
-        )
-      }
+      const errorMessage = handleLibraryLoadingErrors({
+        e: e as Error,
+        platformInfo,
+        id: this.libQueryEnginePath,
+      })
+
+      throw new PrismaClientInitializationError(errorMessage, this.config.clientVersion!)
     }
   }
 
   private async getLibQueryEnginePath(): Promise<string> {
-    // TODO Document ENV VAR
     const libPath = process.env.PRISMA_QUERY_ENGINE_LIBRARY ?? this.config.prismaPath
     if (libPath && fs.existsSync(libPath) && libPath.endsWith('.node')) {
       return libPath
@@ -131,7 +131,7 @@ Read more about deploying Prisma Client: https://pris.ly/d/client-generator`
     searchedLocations: string[]
   }> {
     const searchedLocations: string[] = []
-    let enginePath
+    let enginePath: string
     if (this.libQueryEnginePath) {
       return { enginePath: this.libQueryEnginePath, searchedLocations }
     }
@@ -144,7 +144,7 @@ Read more about deploying Prisma Client: https://pris.ly/d/client-generator`
       return { enginePath, searchedLocations }
     }
 
-    const dirname = eval('__dirname')
+    const dirname = eval('__dirname') as string
     const searchLocations: string[] = [
       // TODO: why hardcoded path? why not look for .prisma/client upwards?
       path.resolve(dirname, '../../../.prisma/client'), // Dot Prisma Path
@@ -169,7 +169,7 @@ Read more about deploying Prisma Client: https://pris.ly/d/client-generator`
     }
     enginePath = path.join(__dirname, getNodeAPIName(this.platform, 'fs'))
 
-    return { enginePath: enginePath ?? '', searchedLocations }
+    return { enginePath, searchedLocations }
   }
 
   // TODO Fixed as in "not broken" or fixed as in "written down"? If any of these, why and how and where?

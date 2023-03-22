@@ -3,7 +3,7 @@ import * as miniProxy from '@prisma/mini-proxy'
 import execa, { ExecaChildProcess } from 'execa'
 import fs from 'fs'
 
-import { setupQueryEngine } from '../../tests/commonUtils/setupQueryEngine'
+import { setupQueryEngine } from '../../tests/_utils/setupQueryEngine'
 import { Providers } from '../../tests/functional/_utils/providers'
 import { JestCli } from './JestCli'
 
@@ -25,16 +25,12 @@ const args = arg(
     '--data-proxy': Boolean,
     // Use edge client (requires --data-proxy)
     '--edge-client': Boolean,
-    // Don't start the Mini-Proxy server, expect it to be started externally
-    // and listening on the default port.
+    // Don't start the Mini-Proxy server and don't override NODE_EXTRA_CA_CERTS. You need to start the Mini-Proxy server
+    // externally on the default port and run `eval $(mini-proxy env)` in your shell before starting the tests.
     '--no-mini-proxy-server': Boolean,
-    // Don't override NODE_EXTRA_CA_CERTS. Useful if a custom mini-proxy
-    // server you start is not the one in node_modules. You then need to run
-    // `eval $(mini-proxy env)` in your shell before starting the tests.
-    '--no-mini-proxy-default-ca': Boolean,
     // Enable debug logs in the bundled Mini-Proxy server
     '--mini-proxy-debug': Boolean,
-    // Since `relationMode` tests need to be run with 2 different values
+    // Since `relationMode-in-separate-gh-action` tests need to be run with 2 different values
     // `foreignKeys` and `prisma`
     // We run them separately in a GitHub Action matrix for now
     // Also the typescript tests fail and it might not be easily fixable
@@ -76,14 +72,8 @@ async function main(): Promise<number | void> {
     }
 
     jestCli = jestCli.withEnv({
-      DATA_PROXY: 'true',
+      TEST_DATA_PROXY: 'true',
     })
-
-    if (!args['--no-mini-proxy-default-ca']) {
-      jestCli = jestCli.withEnv({
-        NODE_EXTRA_CA_CERTS: miniProxy.defaultCertificatesConfig.caCert,
-      })
-    }
 
     if (args['--edge-client']) {
       jestCli = jestCli.withEnv({
@@ -92,6 +82,10 @@ async function main(): Promise<number | void> {
     }
 
     if (!args['--no-mini-proxy-server']) {
+      jestCli = jestCli.withEnv({
+        NODE_EXTRA_CA_CERTS: miniProxy.defaultCertificatesConfig.caCert,
+      })
+
       const qePath = await getBinaryForMiniProxy()
 
       miniProxyProcess = execa('mini-proxy', ['server', '-q', qePath], {
@@ -112,8 +106,10 @@ async function main(): Promise<number | void> {
 
   // See flag description above.
   // If the flag is not provided we want to ignore `relationMode` tests
-  if (!args['--relation-mode-tests-only']) {
-    jestArgs.push('--testPathIgnorePatterns', 'relationMode')
+  if (args['--relation-mode-tests-only']) {
+    jestArgs.push('--runInBand')
+  } else {
+    jestArgs.push('--testPathIgnorePatterns', 'relationMode-in-separate-gh-action')
   }
 
   if (args['--onlyChanged']) {
@@ -138,6 +134,8 @@ async function main(): Promise<number | void> {
       }
 
       if (!args['--no-types']) {
+        // Disable JUnit output for typescript tests
+        process.env.JEST_JUNIT_DISABLE = 'true'
         jestCli.withArgs(['--', 'typescript']).run()
       }
     }

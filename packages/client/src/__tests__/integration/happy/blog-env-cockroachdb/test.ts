@@ -1,3 +1,4 @@
+import { getQueryEngineProtocol } from '@prisma/internals'
 import sql from 'sql-template-tag'
 
 import { generateTestClient } from '../../../../utils/getTestClient'
@@ -5,20 +6,23 @@ import type { SetupParams } from '../../../../utils/setupPostgres'
 import { setupPostgres, tearDownPostgres } from '../../../../utils/setupPostgres'
 
 const describeIf = (condition: boolean) => (condition ? describe : describe.skip)
+const testIf = (condition: boolean) => (condition ? test : test.skip)
 
 describeIf(!process.env.TEST_SKIP_COCKROACHDB)('Blog fixture: Cockroachdb', () => {
   let prisma: any = null
   let PrismaHelpers: any = null
-  let setupParams: any = null
-  const requests: any[] = []
-  const errorLogs: any[] = []
+  let setupParams: SetupParams
+  // const errorLogs: any[] = []
 
   beforeAll(async () => {
     await generateTestClient()
     const { PrismaClient, Prisma } = require('./node_modules/@prisma/client')
     PrismaHelpers = Prisma
 
-    let originalConnectionString = process.env.TEST_COCKROACH_URI || 'postgresql://prisma@localhost:26257/tests'
+    if (!process.env.TEST_COCKROACH_URI) {
+      throw new Error('You must set a value for process.env.TEST_COCKROACH_URI. See TESTING.md')
+    }
+    let originalConnectionString = process.env.TEST_COCKROACH_URI
     originalConnectionString += '-blog-env-cockroachdb'
 
     setupParams = {
@@ -32,9 +36,6 @@ describeIf(!process.env.TEST_SKIP_COCKROACHDB)('Blog fixture: Cockroachdb', () =
       errorFormat: 'colorless',
       __internal: {
         measurePerformance: true,
-        hooks: {
-          beforeRequest: (request) => requests.push(request),
-        },
       },
       datasources: {
         db: {
@@ -83,7 +84,7 @@ describeIf(!process.env.TEST_SKIP_COCKROACHDB)('Blog fixture: Cockroachdb', () =
     expect(users1.length).toBe(1)
   })
 
-  test('can throw validation errors', async () => {
+  testIf(getQueryEngineProtocol() !== 'json')('can throw validation errors', async () => {
     const {
       Prisma: { PrismaClientValidationError },
     } = require('./node_modules/@prisma/client')

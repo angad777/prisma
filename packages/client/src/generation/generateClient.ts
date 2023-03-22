@@ -1,11 +1,9 @@
 import { BinaryType, overwriteFile } from '@prisma/fetch-engine'
 import type { BinaryPaths, DataSource, DMMF, GeneratorConfig } from '@prisma/generator-helper'
-import type { Platform } from '@prisma/internals'
-import { ClientEngineType, getClientEngineType, getEngineVersion } from '@prisma/internals'
-import copy from '@timsuchanek/copy'
+import { assertNever, ClientEngineType, getClientEngineType, getEngineVersion, Platform } from '@prisma/internals'
 import chalk from 'chalk'
 import fs from 'fs'
-import makeDir from 'make-dir'
+import { ensureDir } from 'fs-extra'
 import path from 'path'
 import pkgUp from 'pkg-up'
 import type { O } from 'ts-toolbelt'
@@ -51,6 +49,7 @@ export interface GenerateClientOptions {
   binaryPaths: BinaryPaths
   testMode?: boolean
   copyRuntime?: boolean
+  copyRuntimeSourceMaps?: boolean
   engineVersion: string
   clientVersion: string
   activeProvider: string
@@ -100,7 +99,7 @@ export async function buildClient({
   // we create a regular client that is fit for Node.js
   const nodeTsClient = new TSClient({
     ...tsClientOptions,
-    runtimeName: 'index',
+    runtimeName: getNodeRuntimeName(clientEngineType, dataProxy),
     runtimeDir: runtimeDirs.node,
   })
 
@@ -199,6 +198,7 @@ export async function generateClient(options: GenerateClientOptions): Promise<vo
     binaryPaths,
     testMode,
     copyRuntime,
+    copyRuntimeSourceMaps = false,
     clientVersion,
     engineVersion,
     activeProvider,
@@ -241,10 +241,10 @@ export async function generateClient(options: GenerateClientOptions): Promise<vo
     throw new DenylistError(message)
   }
 
-  await makeDir(finalOutputDir)
-  await makeDir(path.join(outputDir, 'runtime'))
+  await ensureDir(finalOutputDir)
+  await ensureDir(path.join(outputDir, 'runtime'))
   if (generator?.previewFeatures.includes('deno') && !!globalThis.Deno) {
-    await makeDir(path.join(outputDir, 'deno'))
+    await ensureDir(path.join(outputDir, 'deno'))
   }
   // TODO: why do we sometimes use outputDir and sometimes finalOutputDir?
   // outputDir:       /home/millsp/Work/prisma/packages/client
@@ -269,14 +269,13 @@ export async function generateClient(options: GenerateClientOptions): Promise<vo
   if (copyRuntime || !path.resolve(outputDir).endsWith(`@prisma${path.sep}client`)) {
     // TODO: Windows, / is not working here...
     const copyTarget = path.join(outputDir, 'runtime')
-    await makeDir(copyTarget)
+    await ensureDir(copyTarget)
     if (runtimeSourceDir !== copyTarget) {
-      await copy({
+      await copyRuntimeFiles({
         from: runtimeSourceDir,
         to: copyTarget,
-        recursive: true,
-        parallelJobs: process.platform === 'win32' ? 1 : 20,
-        overwrite: true,
+        sourceMaps: copyRuntimeSourceMaps,
+        runtimeName: getNodeRuntimeName(clientEngineType, dataProxy),
       })
     }
   }
@@ -293,7 +292,7 @@ export async function generateClient(options: GenerateClientOptions): Promise<vo
 
   if (transpile === true && dataProxy !== true) {
     if (process.env.NETLIFY) {
-      await makeDir('/tmp/prisma-engines')
+      await ensureDir('/tmp/prisma-engines')
     }
 
     for (const [binaryTarget, filePath] of Object.entries(enginePath)) {
@@ -370,7 +369,7 @@ function validateDmmfAgainstDenylists(prismaClientDmmf: PrismaClientDMMF.Documen
 
   const denylists = {
     // A copy of this list is also in prisma-engines. Any edit should be done in both places.
-    // https://github.com/prisma/prisma-engines/blob/main/libs/datamodel/core/src/transform/ast_to_dml/reserved_model_names.rs
+    // https://github.com/prisma/prisma-engines/blob/main/psl/parser-database/src/names/reserved_model_names.rs
     models: [
       // Reserved Prisma keywords
       'PrismaClient',
@@ -540,4 +539,41 @@ function findOutputPathDeclaration(datamodel: string): OutputDeclaration | null 
     }
   }
   return null
+}
+
+function getNodeRuntimeName(engineType: ClientEngineType, dataProxy: boolean): string {
+  if (dataProxy) {
+    return 'data-proxy'
+  }
+  if (engineType === ClientEngineType.Binary) {
+    return 'binary'
+  }
+  if (engineType === ClientEngineType.Library) {
+    return 'library'
+  }
+
+  assertNever(engineType, 'Unknown engine type')
+}
+
+type CopyRuntimeOptions = {
+  from: string
+  to: string
+  runtimeName: string
+  sourceMaps: boolean
+}
+
+async function copyRuntimeFiles({ from, to, runtimeName, sourceMaps }: CopyRuntimeOptions) {
+  const files = ['index.d.ts', 'index-browser.js', 'index-browser.d.ts']
+
+  files.push(`${runtimeName}.js`, `${runtimeName}.d.ts`)
+
+  if (runtimeName === 'data-proxy') {
+    files.push('edge.js', 'edge-esm.js')
+  }
+
+  if (sourceMaps) {
+    files.push(...files.filter((file) => file.endsWith('.js')).map((file) => `${file}.map`))
+  }
+
+  await Promise.all(files.map((file) => copyFile(path.join(from, file), path.join(to, file))))
 }

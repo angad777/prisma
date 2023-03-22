@@ -1,6 +1,8 @@
+// describeIf is making eslint unhappy about the test names
 /* eslint-disable jest/no-identical-title */
 
-import { jestContext, serializeQueryEngineName } from '@prisma/internals'
+import { jestContext } from '@prisma/get-platform'
+import { serializeQueryEngineName } from '@prisma/internals'
 import { DbExecute, DbPull, DbPush, MigrateDev, MigrateReset } from '@prisma/migrate'
 import fs from 'fs'
 import stripAnsi from 'strip-ansi'
@@ -28,10 +30,15 @@ DROP TABLE IF EXISTS 'test-dbexecute';
 CREATE TABLE 'test-dbexecute' ("id" INTEGER PRIMARY KEY);
 DROP TABLE 'test-dbexecute';`
 
-function urlIsMissingValidationError(source: 'getDmmf' | 'getConfig') {
-  const header = source === 'getDmmf' ? 'query-engine-NORMALIZED' : 'get-config wasm'
+type Source = 'get-config' | 'validate'
+const sourceToContext = {
+  'get-config': 'getConfig',
+  validate: 'validate',
+}
+
+function urlIsMissingValidationError(source: Source) {
   return `
-  Prisma schema validation - (${header})
+  Prisma schema validation - (${source} wasm)
   Error code: P1012
   error: Argument "url" is missing in data source block "db".
     -->  schema.prisma:3
@@ -43,7 +50,7 @@ function urlIsMissingValidationError(source: 'getDmmf' | 'getConfig') {
      | 
   
   Validation Error Count: 1
-  [Context: ${source}]
+  [Context: ${sourceToContext[source]}]
   
   Prisma CLI Version : 0.0.0
   `
@@ -81,9 +88,10 @@ const urlMustStartWithProtocolValidationError = `
  Prisma CLI Version : 0.0.0
    `
 
-const couldNotFindDatasourceError = `Couldn't find a datasource in the schema.prisma file`
+const aDatasourceBlockIsMissingError = `A datasource block is missing in the Prisma schema file.`
 const thereIsNoDatasourceError = `
 There is no datasource in the schema.
+
 
 `
 
@@ -121,7 +129,7 @@ describe('[wasm] incomplete-schemas', () => {
       try {
         await DbPull.new().parse([])
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchSnapshot(urlMustStartWithProtocolValidationError)
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlMustStartWithProtocolValidationError)
       }
     })
 
@@ -255,6 +263,15 @@ describe('[wasm] incomplete-schemas', () => {
       ctx.fixture('incomplete-schemas/datasource-block-no-url/prisma')
     })
 
+    it('validate', async () => {
+      expect.assertions(1)
+      try {
+        await Validate.new().parse([])
+      } catch (e) {
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('validate'))
+      }
+    })
+
     it('format', async () => {
       expect.assertions(1)
 
@@ -262,7 +279,7 @@ describe('[wasm] incomplete-schemas', () => {
         await Format.new().parse([])
       } catch (e) {
         expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(
-          urlIsMissingValidationError('getDmmf'),
+          urlIsMissingValidationError('validate'),
         )
       }
     })
@@ -277,6 +294,11 @@ describe('[wasm] incomplete-schemas', () => {
       const result = await Format.new().parse([])
       expect(result).toMatch(/^Formatted (.*) in \d+ms 🚀$/)
     })
+
+    it('validate', async () => {
+      const result = await Validate.new().parse([])
+      expect(result).toMatch(/^The schema at (.*) is valid 🚀$/)
+    })
   })
 
   describe('datasource-block-no-url', () => {
@@ -289,7 +311,7 @@ describe('[wasm] incomplete-schemas', () => {
       try {
         await DbPush.new().parse([])
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('getConfig'))
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('get-config'))
       }
     })
 
@@ -298,7 +320,7 @@ describe('[wasm] incomplete-schemas', () => {
       try {
         await DbPull.new().parse([])
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('getConfig'))
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('get-config'))
       }
     })
 
@@ -331,7 +353,7 @@ describe('[wasm] incomplete-schemas', () => {
       try {
         await MigrateReset.new().parse([])
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('getConfig'))
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('get-config'))
       }
     })
 
@@ -340,38 +362,16 @@ describe('[wasm] incomplete-schemas', () => {
       try {
         await MigrateDev.new().parse([])
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('getConfig'))
+        expect(stripAnsi(e.message)).toMatchInlineSnapshot(urlIsMissingValidationError('get-config'))
       }
     })
   })
 })
 
 describe('[normalized library/binary] incomplete-schemas', () => {
-  describe('datasource-block-no-url', () => {
-    beforeEach(() => {
-      ctx.fixture('incomplete-schemas/datasource-block-no-url/prisma')
-    })
-
-    it('validate', async () => {
-      expect.assertions(1)
-      try {
-        await Validate.new().parse([])
-      } catch (e) {
-        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(
-          urlIsMissingValidationError('getDmmf'),
-        )
-      }
-    })
-  })
-
   describe('empty-schema', () => {
     beforeEach(() => {
       ctx.fixture('incomplete-schemas/empty-schema/prisma')
-    })
-
-    it('validate', async () => {
-      const result = await Validate.new().parse([])
-      expect(result).toMatch(/^The schema at (.*) is valid 🚀$/)
     })
 
     it('db push', async () => {
@@ -379,7 +379,7 @@ describe('[normalized library/binary] incomplete-schemas', () => {
       try {
         await DbPush.new().parse([])
       } catch (e) {
-        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(couldNotFindDatasourceError)
+        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(aDatasourceBlockIsMissingError)
       }
     })
 
@@ -399,7 +399,7 @@ describe('[normalized library/binary] incomplete-schemas', () => {
       try {
         await DbExecute.new().parse(['--file=./script.sql'])
       } catch (e) {
-        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(thereIsNoDatasourceError + '\n')
+        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(thereIsNoDatasourceError)
       }
     })
 
@@ -408,7 +408,7 @@ describe('[normalized library/binary] incomplete-schemas', () => {
       try {
         await MigrateReset.new().parse([])
       } catch (e) {
-        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(couldNotFindDatasourceError)
+        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(aDatasourceBlockIsMissingError)
       }
     })
 
@@ -417,7 +417,7 @@ describe('[normalized library/binary] incomplete-schemas', () => {
       try {
         await MigrateDev.new().parse([])
       } catch (e) {
-        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(couldNotFindDatasourceError)
+        expect(serializeQueryEngineName(stripAnsi(e.message))).toMatchInlineSnapshot(aDatasourceBlockIsMissingError)
       }
     })
   })

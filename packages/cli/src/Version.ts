@@ -80,12 +80,6 @@ export class Version implements Command {
         .with({ 'migration-engine': P.select() }, (currEngineInfo) => {
           return ['Migration Engine', currEngineInfo]
         })
-        .with({ 'introspection-engine': P.select() }, (currEngineInfo) => {
-          return ['Introspection Engine', currEngineInfo]
-        })
-        .with({ 'format-binary': P.select() }, (currEngineInfo) => {
-          return ['Format Binary', currEngineInfo]
-        })
         .exhaustive()
     })
 
@@ -131,7 +125,7 @@ export class Version implements Command {
       const datamodel = await getSchema()
       const config = await getConfig({
         datamodel,
-        ignoreEnvVarErrors: false,
+        ignoreEnvVarErrors: true,
       })
       const generator = config.generators.find((g) => g.previewFeatures.length > 0)
       if (generator) {

@@ -2,8 +2,8 @@ import * as lzString from 'lz-string'
 
 import * as Extensions from './core/extensions'
 import * as Types from './core/types'
+import { Payload } from './core/types'
 
-export { PrismaClientExtensionError } from './core/extensions/wrapExtensionCallback'
 export {
   type Metric,
   type MetricHistogram,
@@ -40,3 +40,10 @@ export { decompressFromBase64 }
 
 export { Types }
 export { Extensions }
+
+/**
+ * Payload is already exported via Types but tsc will complain that it isn't reachable
+ * The issue lies with the type bundler which does not add exports for dependent types
+ * TODO: Maybe simply exporting all types in runtime will do the trick
+ */
+export { type Payload }
