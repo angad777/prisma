@@ -1,12 +1,14 @@
-import * as Extensions from './Extensions'
-import { GetFindResult, GetResult } from './GetResult'
-import { Payload } from './Payload'
-import * as Public from './Public'
-import * as Utils from './Utils'
+import * as Extensions from './exported/Extensions'
+import { OperationPayload } from './exported/Payload'
+import * as Public from './exported/Public'
+import * as Result from './exported/Result'
+import * as Utils from './exported/Utils'
 
+/** Specific types */
+export { Result }
 export { Extensions }
 export { Utils }
 export { Public }
-export { type GetResult }
-export { type GetFindResult }
-export { type Payload }
+
+/** General types */
+export { type OperationPayload as Payload }

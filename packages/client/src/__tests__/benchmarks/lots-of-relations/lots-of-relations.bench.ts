@@ -7,11 +7,12 @@ import { generateTestClient } from '../../../utils/getTestClient'
 
 const suite = withCodSpeed(new Benchmark.Suite('typescript'))
 // @ts-ignore
+// eslint-disable-next-line @typescript-eslint/no-floating-promises
 suite
   .add('client generation 100 models with relations', {
     defer: true,
     fn: function (deferred) {
-      generateTestClient(__dirname)
+      generateTestClient({ projectDir: __dirname })
         .then(() => {
           deferred.resolve()
         })

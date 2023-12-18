@@ -8,18 +8,11 @@ declare const newPrismaClient: NewPrismaClient<typeof PrismaClient>
 testMatrix.setupTestSuite(
   () => {
     test('instantiate works without failing', () => {
-      const prisma = newPrismaClient()
+      newPrismaClient()
     })
   },
   {
     skipDefaultClientInstance: true,
     skipDb: true,
-    skipDataProxy: {
-      runtimes: ['node', 'edge'],
-      reason: `
-        Fails with Data Proxy: error is an instance of InvalidDatasourceError
-        Datasource "db" references an environment variable "INVALID_DATABASE_URI" that is not set.
-      `,
-    },
   },
 )

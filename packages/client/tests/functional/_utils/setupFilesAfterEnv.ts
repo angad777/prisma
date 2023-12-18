@@ -1,7 +1,11 @@
+// add all jest-extended matchers
+// see https://jest-extended.jestcommunity.dev/docs/matchers/
+import * as matchers from 'jest-extended'
 import { toMatchInlineSnapshot, toMatchSnapshot } from 'jest-snapshot'
 import stripAnsi from 'strip-ansi'
 
 process.env.PRISMA_HIDE_PREVIEW_FLAG_WARNINGS = 'true'
+expect.extend(matchers)
 
 expect.extend({
   toMatchPrismaErrorSnapshot(received: unknown) {
@@ -59,7 +63,21 @@ function testRepeat(n: number) {
   return getRepeatProxy(test)
 }
 
-globalThis.testIf = (condition: boolean) => (condition ? test : test.skip)
+// allows to .skip.skip.skip... a test
+const skip = new Proxy(it.skip, {
+  get(target, prop) {
+    if (prop === 'skip') return it.skip
+    return target[prop]
+  },
+})
+
+globalThis.beforeAll = process.env.TEST_GENERATE_ONLY === 'true' ? () => {} : beforeAll
+globalThis.afterAll = process.env.TEST_GENERATE_ONLY === 'true' ? () => {} : afterAll
+globalThis.beforeEach = process.env.TEST_GENERATE_ONLY === 'true' ? () => {} : beforeEach
+globalThis.afterEach = process.env.TEST_GENERATE_ONLY === 'true' ? () => {} : afterEach
+globalThis.test = process.env.TEST_GENERATE_ONLY === 'true' ? skip : test
+globalThis.testIf = (condition: boolean) => (condition && process.env.TEST_GENERATE_ONLY !== 'true' ? test : skip)
+globalThis.skipTestIf = (condition: boolean) => (condition || process.env.TEST_GENERATE_ONLY === 'true' ? skip : test)
 globalThis.describeIf = (condition: boolean) => (condition ? describe : describe.skip)
 globalThis.testRepeat = testRepeat
 

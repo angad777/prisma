@@ -33,7 +33,6 @@ describe('generator', () => {
       baseDir: __dirname,
       printDownloadProgress: false,
       skipDownload: true,
-      dataProxy: false,
     })
 
     const manifest = omit<any, any>(generator.manifest, ['version']) as any
@@ -69,7 +68,13 @@ describe('generator', () => {
 
     expect(omit(generator.options!.generator, ['output'])).toMatchInlineSnapshot(`
       {
-        binaryTargets: [],
+        binaryTargets: [
+          {
+            fromEnvVar: null,
+            native: true,
+            value: TEST_PLATFORM,
+          },
+        ],
         config: {},
         name: client,
         previewFeatures: [],
@@ -115,7 +120,6 @@ describe('generator', () => {
         baseDir: __dirname,
         printDownloadProgress: false,
         skipDownload: true,
-        dataProxy: false,
       })
     } catch (e) {
       expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
@@ -167,7 +171,6 @@ describe('generator', () => {
         baseDir: __dirname,
         printDownloadProgress: false,
         skipDownload: true,
-        dataProxy: false,
       })
     } catch (e) {
       doesNotExistError = e
@@ -184,7 +187,6 @@ describe('generator', () => {
       baseDir: __dirname,
       printDownloadProgress: false,
       skipDownload: true,
-      dataProxy: false,
     })
 
     try {
@@ -226,7 +228,6 @@ describe('generator', () => {
       baseDir: __dirname,
       printDownloadProgress: false,
       skipDownload: true,
-      dataProxy: false,
     })
 
     const manifest = omit<any, any>(generator.manifest, ['version']) as any
@@ -262,7 +263,13 @@ describe('generator', () => {
 
     expect(omit(generator.options!.generator, ['output'])).toMatchInlineSnapshot(`
       {
-        binaryTargets: [],
+        binaryTargets: [
+          {
+            fromEnvVar: null,
+            native: true,
+            value: TEST_PLATFORM,
+          },
+        ],
         config: {},
         name: client,
         previewFeatures: [],

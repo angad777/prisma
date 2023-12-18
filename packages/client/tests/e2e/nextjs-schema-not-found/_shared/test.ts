@@ -7,9 +7,8 @@ import { $ } from 'zx'
  * - Workaround + Server Components: should succeed
  * - Workaround + non-Server Components: should succeed
  * @param endpoint the endpoint to test
- * @param serverComponents whether we use server components or not
  */
-async function test(endpoint: string, serverComponents: boolean) {
+async function test(endpoint: string) {
   console.log(`Testing ${endpoint} with WORKAROUND=${process.env.WORKAROUND}`)
 
   // prepare and start the next.js server
@@ -33,9 +32,7 @@ async function test(endpoint: string, serverComponents: boolean) {
     // Dual logic: server components error at build & runtime, non-Server components at runtime
     // this is also why we use `.nothrow()` and only check for exit codes as well as http codes
     const stderr = nextJsBuild.stderr + (await nextJsProcess).stderr // dual logic
-    const message = `PrismaClientInitializationError: Your schema.prisma could not be found, and we detected that you are using Next.js.
-Find out why and learn how to fix this: https://pris.ly/d/schema-not-found-nextjs
-    at`
+    const message = `We detected that you are using Next.js, learn how to fix this: https://pris.ly/d/engine-not-found-nextjs`
 
     if (stderr.includes(message) === false) {
       throw new Error(`Expected an error message starting with "${message}" but got "${stderr}"`)
@@ -57,14 +54,14 @@ Find out why and learn how to fix this: https://pris.ly/d/schema-not-found-nextj
 
 export async function testServerComponents() {
   process.env.WORKAROUND = 'true'
-  await test('test/42', true)
+  await test('test/42')
   process.env.WORKAROUND = 'false'
-  await test('test/42', true)
+  await test('test/42')
 }
 
 export async function testNonServerComponents() {
   process.env.WORKAROUND = 'true'
-  await test('api/test', false)
+  await test('api/test')
   process.env.WORKAROUND = 'false'
-  await test('api/test', false)
+  await test('api/test')
 }

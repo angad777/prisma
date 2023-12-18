@@ -4,39 +4,34 @@ import { generateTestClient } from '../../../../utils/getTestClient'
 import type { SetupParams } from '../../../../utils/setupPostgres'
 import { setupPostgres, tearDownPostgres } from '../../../../utils/setupPostgres'
 // @ts-ignore trick to get typings at dev time
-import type { Prisma, PrismaClient } from './node_modules/.prisma/client'
+import type { PrismaClient } from './node_modules/.prisma/client'
 
 let prisma: PrismaClient
-let PrismaUtil: typeof Prisma
-const baseUri = process.env.TEST_POSTGRES_URI
 
 const email = faker.internet.email()
-const title = faker.name.jobTitle()
+const title = faker.person.jobTitle()
 const newEmail = faker.internet.email()
-const newTitle = faker.name.jobTitle()
+const newTitle = faker.person.jobTitle()
 
-describe('multi-schema', () => {
+describe('multischema', () => {
   beforeAll(async () => {
-    process.env.TEST_POSTGRES_URI += '-multi-schema'
-
-    await tearDownPostgres(process.env.TEST_POSTGRES_URI!)
+    process.env.DATABASE_URL = process.env.TEST_POSTGRES_URI!.replace('tests', 'tests-multischema')
+    await tearDownPostgres(process.env.DATABASE_URL)
     const SetupParams: SetupParams = {
-      connectionString: process.env.TEST_POSTGRES_URI!,
+      connectionString: process.env.DATABASE_URL,
       dirname: __dirname,
     }
     await setupPostgres(SetupParams).catch((e) => console.error(e))
 
     await generateTestClient()
-    const { PrismaClient, Prisma } = require('./node_modules/.prisma/client')
+    const { PrismaClient } = require('./node_modules/.prisma/client')
     prisma = new PrismaClient()
-    PrismaUtil = Prisma
   })
 
   afterAll(async () => {
     await prisma.post.deleteMany()
     await prisma.user.deleteMany()
     await prisma.$disconnect()
-    process.env.TEST_POSTGRES_URI = baseUri
   })
 
   test('create', async () => {

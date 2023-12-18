@@ -1,17 +1,5 @@
 import { jestConsoleContext, jestContext } from '@prisma/get-platform'
-import {
-  DbCommand,
-  DbPull,
-  DbPush,
-  // DbDrop,
-  DbSeed,
-  MigrateCommand,
-  MigrateDeploy,
-  MigrateDev,
-  MigrateReset,
-  MigrateResolve,
-  MigrateStatus,
-} from '@prisma/migrate'
+import { DbPull } from '@prisma/migrate'
 
 import { CLI } from '../../CLI'
 
@@ -43,23 +31,9 @@ const cliInstance = CLI.new(
     // version: Version.new(),
     // validate: Validate.new(),
     // format: Format.new(),
-    // doctor: Doctor.new(),
     // telemetry: Telemetry.new(),
   },
-  [
-    'version',
-    'init',
-    'migrate',
-    'db',
-    'introspect',
-    'dev',
-    'studio',
-    'generate',
-    'validate',
-    'format',
-    'doctor',
-    'telemetry',
-  ],
+  ['version', 'init', 'migrate', 'db', 'introspect', 'dev', 'studio', 'generate', 'validate', 'format', 'telemetry'],
 )
 
 it('no params should return help', async () => {

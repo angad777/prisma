@@ -1,11 +1,10 @@
 import pluralize from 'pluralize'
 
-import { DMMF } from '../../runtime/dmmf-types'
-import { capitalize, lowerCase } from '../../runtime/utils/common'
-import { getAggregateArgsName, getModelArgName, unique } from '../utils'
+import { DMMF } from '../dmmf-types'
+import { getAggregateArgsName, getModelArgName } from '../utils'
+import { capitalize, lowerCase } from '../utils/common'
 import type { JSDocMethodBodyCtx } from './jsdoc'
 import { JSDocs } from './jsdoc'
-import { ifExtensions } from './utils/ifExtensions'
 
 export function getMethodJSDocBody(action: DMMF.ModelAction, mapping: DMMF.ModelMapping, model: DMMF.Model): string {
   const ctx: JSDocMethodBodyCtx = {
@@ -26,36 +25,33 @@ export function getMethodJSDoc(action: DMMF.ModelAction, mapping: DMMF.ModelMapp
   return wrapComment(getMethodJSDocBody(action, mapping, model))
 }
 export function getGenericMethod(name: string, actionName: DMMF.ModelAction) {
-  if (actionName === 'count') {
+  if (actionName === DMMF.ModelAction.count) {
     return ''
   }
-  if (actionName === 'aggregate') {
+  if (actionName === DMMF.ModelAction.aggregate) {
     return `<T extends ${getAggregateArgsName(name)}>`
   }
-  if (actionName === 'findRaw' || actionName === 'aggregateRaw') {
+  if (actionName === DMMF.ModelAction.findRaw || actionName === DMMF.ModelAction.aggregateRaw) {
     return ''
   }
-  if (actionName === 'findFirst' || actionName === 'findUnique') {
-    return `<T extends ${getModelArgName(name, actionName)}${ifExtensions(
-      '<ExtArgs>',
-      '',
-    )},  LocalRejectSettings = T["rejectOnNotFound"] extends RejectOnNotFound ? T['rejectOnNotFound'] : undefined>`
+  if (actionName === DMMF.ModelAction.findFirst || actionName === DMMF.ModelAction.findUnique) {
+    return `<T extends ${getModelArgName(name, actionName)}<ExtArgs>>`
   }
   const modelArgName = getModelArgName(name, actionName)
 
   if (!modelArgName) {
     console.log({ name, actionName })
   }
-  return `<T extends ${modelArgName}${ifExtensions('<ExtArgs>', '')}>`
+  return `<T extends ${modelArgName}<ExtArgs>>`
 }
 export function getArgs(modelName: string, actionName: DMMF.ModelAction) {
-  if (actionName === 'count') {
-    return `args?: Omit<${getModelArgName(modelName, DMMF.ModelAction.findMany)}, 'select' | 'include'>`
+  if (actionName === DMMF.ModelAction.count) {
+    return `args?: Omit<${getModelArgName(modelName, DMMF.ModelAction.findMany)}, 'select' | 'include' | 'distinct' >`
   }
-  if (actionName === 'aggregate') {
+  if (actionName === DMMF.ModelAction.aggregate) {
     return `args: Subset<T, ${getAggregateArgsName(modelName)}>`
   }
-  if (actionName === 'findRaw' || actionName === 'aggregateRaw') {
+  if (actionName === DMMF.ModelAction.findRaw || actionName === DMMF.ModelAction.aggregateRaw) {
     return `args?: ${getModelArgName(modelName, actionName)}`
   }
   return `args${
@@ -67,7 +63,7 @@ export function getArgs(modelName: string, actionName: DMMF.ModelAction) {
     actionName === DMMF.ModelAction.findFirstOrThrow
       ? '?'
       : ''
-  }: SelectSubset<T, ${getModelArgName(modelName, actionName)}${ifExtensions('<ExtArgs>', '')}>`
+  }: SelectSubset<T, ${getModelArgName(modelName, actionName)}<ExtArgs>>`
 }
 export function wrapComment(str: string): string {
   return `/**\n${str

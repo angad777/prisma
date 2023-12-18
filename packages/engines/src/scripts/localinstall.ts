@@ -1,6 +1,6 @@
 import { BinaryType, getCacheDir } from '@prisma/fetch-engine'
 import { enginesOverride } from '@prisma/fetch-engine/package.json'
-import { getPlatform } from '@prisma/get-platform'
+import { getBinaryTargetForCurrentPlatform } from '@prisma/get-platform'
 import execa from 'execa'
 import fs from 'fs'
 import path from 'path'
@@ -8,15 +8,15 @@ import path from 'path'
 const baseDir = path.join(__dirname, '..', '..')
 
 async function main() {
-  const binaryTarget = await getPlatform()
+  const binaryTarget = await getBinaryTargetForCurrentPlatform()
   const cacheDir = (await getCacheDir('master', '_local_', binaryTarget))!
   const branch = enginesOverride?.['branch'] as string | undefined
   let folder = enginesOverride?.['folder'] as string | undefined
 
   const engineCachePaths = {
-    [BinaryType.queryEngine]: path.join(cacheDir, BinaryType.queryEngine),
-    [BinaryType.libqueryEngine]: path.join(cacheDir, BinaryType.libqueryEngine),
-    [BinaryType.migrationEngine]: path.join(cacheDir, BinaryType.migrationEngine),
+    [BinaryType.QueryEngineBinary]: path.join(cacheDir, BinaryType.QueryEngineBinary),
+    [BinaryType.QueryEngineLibrary]: path.join(cacheDir, BinaryType.QueryEngineLibrary),
+    [BinaryType.SchemaEngineBinary]: path.join(cacheDir, BinaryType.SchemaEngineBinary),
   }
 
   if (branch !== undefined) {
@@ -60,9 +60,9 @@ async function main() {
     const binExt = binaryTarget.includes('windows') ? '.exe' : ''
 
     const engineOutputPaths = {
-      [BinaryType.libqueryEngine]: path.join(folder, 'libquery_engine'.concat(libExt)),
-      [BinaryType.queryEngine]: path.join(folder, BinaryType.queryEngine.concat(binExt)),
-      [BinaryType.migrationEngine]: path.join(folder, BinaryType.migrationEngine.concat(binExt)),
+      [BinaryType.QueryEngineLibrary]: path.join(folder, 'libquery_engine'.concat(libExt)),
+      [BinaryType.QueryEngineBinary]: path.join(folder, BinaryType.QueryEngineBinary.concat(binExt)),
+      [BinaryType.SchemaEngineBinary]: path.join(folder, BinaryType.SchemaEngineBinary.concat(binExt)),
     }
 
     for (const [binaryType, outputPath] of Object.entries(engineOutputPaths)) {

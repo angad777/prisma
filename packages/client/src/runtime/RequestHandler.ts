@@ -1,47 +1,48 @@
 import { Context } from '@opentelemetry/api'
 import Debug from '@prisma/debug'
-import {
-  EventEmitter,
-  Fetch,
-  getTraceParent,
-  hasBatchIndex,
-  InteractiveTransactionOptions,
-  TracingConfig,
-  TransactionOptions,
-} from '@prisma/engine-core'
 import { assertNever } from '@prisma/internals'
 import stripAnsi from 'strip-ansi'
 
+import {
+  EngineValidationError,
+  Fetch,
+  InteractiveTransactionOptions,
+  JsonQuery,
+  LogEmitter,
+  TransactionOptions,
+} from '../runtime/core/engines'
 import {
   PrismaClientInitializationError,
   PrismaClientKnownRequestError,
   PrismaClientRustPanicError,
   PrismaClientUnknownRequestError,
 } from '.'
-import { applyResultExtensions } from './core/extensions/applyResultExtensions'
+import { QueryEngineResult } from './core/engines/common/types/QueryEngine'
+import { throwValidationException } from './core/errorRendering/throwValidationException'
+import { hasBatchIndex } from './core/errors/ErrorWithBatchIndex'
+import { NotFoundError } from './core/errors/NotFoundError'
+import { createApplyBatchExtensionsFunction } from './core/extensions/applyQueryExtensions'
 import { MergedExtensionsList } from './core/extensions/MergedExtensionsList'
-import { visitQueryResult } from './core/extensions/visitQueryResult'
-import { dmmfToJSModelName } from './core/model/utils/dmmfToJSModelName'
-import { ProtocolEncoder, ProtocolMessage } from './core/protocol/common'
+import { deserializeJsonResponse } from './core/jsonProtocol/deserializeJsonResponse'
+import { getBatchId } from './core/jsonProtocol/getBatchId'
+import { isWrite } from './core/jsonProtocol/isWrite'
 import { PrismaPromiseInteractiveTransaction, PrismaPromiseTransaction } from './core/request/PrismaPromise'
-import { JsArgs } from './core/types/JsApi'
+import { Action, JsArgs } from './core/types/exported/JsApi'
 import { DataLoader } from './DataLoader'
 import type { Client, Unpacker } from './getPrismaClient'
 import { CallSite } from './utils/CallSite'
 import { createErrorMessageWithContext } from './utils/createErrorMessageWithContext'
 import { deepGet } from './utils/deep-set'
-import { NotFoundError, RejectOnNotFound, throwIfNotFound } from './utils/rejectOnNotFound'
 
 const debug = Debug('prisma:client:request_handler')
 
 export type RequestParams = {
   modelName?: string
-  protocolMessage: ProtocolMessage
-  protocolEncoder: ProtocolEncoder
+  action: Action
+  protocolQuery: JsonQuery
   dataPath: string[]
   clientMethod: string
   callsite?: CallSite
-  rejectOnNotFound?: RejectOnNotFound
   transaction?: PrismaPromiseTransaction
   extensions: MergedExtensionsList
   args?: any
@@ -53,139 +54,123 @@ export type RequestParams = {
 }
 
 export type HandleErrorParams = {
+  args: JsArgs
   error: any
   clientMethod: string
   callsite?: CallSite
   transaction?: PrismaPromiseTransaction
-}
-
-export type Request = {
-  protocolMessage: ProtocolMessage
-  protocolEncoder: ProtocolEncoder
-  transaction?: PrismaPromiseTransaction
-  otelParentCtx?: Context
-  otelChildCtx?: Context
-  tracingConfig?: TracingConfig
-  customDataProxyFetch?: (fetch: Fetch) => Fetch
-}
-
-type ApplyExtensionsParams = {
-  result: object
-  modelName: string
-  args: JsArgs
-  extensions: MergedExtensionsList
+  modelName?: string
 }
 
 export class RequestHandler {
   client: Client
-  dataloader: DataLoader<Request>
-  private logEmitter?: EventEmitter
+  dataloader: DataLoader<RequestParams>
+  private logEmitter?: LogEmitter
 
-  constructor(client: Client, logEmitter?: EventEmitter) {
+  constructor(client: Client, logEmitter?: LogEmitter) {
     this.logEmitter = logEmitter
     this.client = client
+
     this.dataloader = new DataLoader({
-      batchLoader: (requests) => {
-        const transaction = requests[0].transaction
-        const encoder = requests[0].protocolEncoder
-        const queries = encoder.createBatch(requests.map((r) => r.protocolMessage))
-        const traceparent = getTraceParent({ context: requests[0].otelParentCtx, tracingConfig: client._tracingConfig })
+      batchLoader: createApplyBatchExtensionsFunction(async ({ requests, customDataProxyFetch }) => {
+        const { transaction, otelParentCtx } = requests[0]
+        const queries = requests.map((r) => r.protocolQuery)
+        const traceparent = this.client._tracingHelper.getTraceParent(otelParentCtx)
 
         // TODO: pass the child information to QE for it to issue links to queries
         // const links = requests.map((r) => trace.getSpanContext(r.otelChildCtx!))
 
-        const containsWrite = requests.some((r) => r.protocolMessage.isWrite())
+        const containsWrite = requests.some((r) => isWrite(r.protocolQuery.action))
 
-        return this.client._engine.requestBatch(queries, {
+        const results = await this.client._engine.requestBatch(queries, {
           traceparent,
           transaction: getTransactionOptions(transaction),
           containsWrite,
-          customDataProxyFetch: requests[0].customDataProxyFetch,
+          customDataProxyFetch,
         })
-      },
-      singleLoader: (request) => {
+
+        return results.map((result, i) => {
+          if (result instanceof Error) {
+            return result
+          }
+
+          try {
+            return this.mapQueryEngineResult(requests[i], result)
+          } catch (error) {
+            return error
+          }
+        })
+      }),
+
+      singleLoader: async (request) => {
         const interactiveTransaction =
           request.transaction?.kind === 'itx' ? getItxTransactionOptions(request.transaction) : undefined
 
-        return this.client._engine.request(request.protocolMessage.toEngineQuery(), {
-          traceparent: getTraceParent({ tracingConfig: request.tracingConfig }),
+        const response = await this.client._engine.request(request.protocolQuery, {
+          traceparent: this.client._tracingHelper.getTraceParent(),
           interactiveTransaction,
-          isWrite: request.protocolMessage.isWrite(),
+          isWrite: isWrite(request.protocolQuery.action),
           customDataProxyFetch: request.customDataProxyFetch,
         })
+        return this.mapQueryEngineResult(request, response)
       },
+
       batchBy: (request) => {
         if (request.transaction?.id) {
           return `transaction-${request.transaction.id}`
         }
 
-        return request.protocolMessage.getBatchId()
+        return getBatchId(request.protocolQuery)
+      },
+
+      batchOrder(requestA, requestB) {
+        if (requestA.transaction?.kind === 'batch' && requestB.transaction?.kind === 'batch') {
+          return requestA.transaction.index - requestB.transaction.index
+        }
+        return 0
       },
     })
   }
 
-  async request({
-    protocolMessage,
-    protocolEncoder,
-    dataPath = [],
-    callsite,
-    modelName,
-    rejectOnNotFound,
-    clientMethod,
-    args,
-    transaction,
-    unpacker,
-    extensions,
-    otelParentCtx,
-    otelChildCtx,
-    customDataProxyFetch,
-  }: RequestParams) {
+  async request(params: RequestParams) {
     try {
-      const response = await this.dataloader.request({
-        protocolMessage,
-        protocolEncoder,
-        transaction,
-        otelParentCtx,
-        otelChildCtx,
-        tracingConfig: this.client._tracingConfig,
-        customDataProxyFetch,
-      })
-      const data = response?.data
-      const elapsed = response?.elapsed
-
-      /**
-       * Unpack
-       */
-      let result = this.unpack(protocolMessage, data, dataPath, unpacker)
-      throwIfNotFound(result, clientMethod, modelName, rejectOnNotFound)
-      if (modelName) {
-        result = this.applyResultExtensions({ result, modelName, args, extensions })
-      }
-      if (process.env.PRISMA_CLIENT_GET_TIME) {
-        return { data: result, elapsed }
-      }
-      return result
+      return await this.dataloader.request(params)
     } catch (error) {
-      this.handleAndLogRequestError({ error, clientMethod, callsite, transaction })
+      const { clientMethod, callsite, transaction, args, modelName } = params
+      this.handleAndLogRequestError({ error, clientMethod, callsite, transaction, args, modelName })
     }
+  }
+
+  mapQueryEngineResult({ dataPath, unpacker }: RequestParams, response: QueryEngineResult<any>) {
+    const data = response?.data
+    const elapsed = response?.elapsed
+
+    /**
+     * Unpack
+     */
+    const result = this.unpack(data, dataPath, unpacker)
+    if (process.env.PRISMA_CLIENT_GET_TIME) {
+      return { data: result, elapsed }
+    }
+    return result
   }
 
   /**
    * Handles the error and logs it, logging the error is done synchronously waiting for the event
    * handlers to finish.
    */
-  handleAndLogRequestError({ error, clientMethod, callsite, transaction }: HandleErrorParams): never {
+  handleAndLogRequestError(params: HandleErrorParams): never {
     try {
-      this.handleRequestError({ error, clientMethod, callsite, transaction })
+      this.handleRequestError(params)
     } catch (err) {
       if (this.logEmitter) {
-        this.logEmitter.emit('error', { message: err.message, target: clientMethod, timestamp: new Date() })
+        this.logEmitter.emit('error', { message: err.message, target: params.clientMethod, timestamp: new Date() })
       }
       throw err
     }
   }
 
-  handleRequestError({ error, clientMethod, callsite, transaction }: HandleErrorParams): never {
+  handleRequestError({ error, clientMethod, callsite, transaction, args, modelName }: HandleErrorParams): never {
     debug(error)
 
     if (isMismatchingBatchIndex(error, transaction)) {
@@ -198,6 +183,18 @@ export class RequestHandler {
       // TODO: This is a workaround to keep backwards compatibility with clients
       // consuming NotFoundError
       throw error
+    }
+
+    if (error instanceof PrismaClientKnownRequestError && isValidationError(error)) {
+      const validationError = convertValidationError(error.meta as EngineValidationError)
+      throwValidationException({
+        args,
+        errors: [validationError],
+        callsite,
+        errorFormat: this.client._errorFormat,
+        originalMethod: clientMethod,
+        clientVersion: this.client._clientVersion,
+      })
     }
 
     let message = error.message
@@ -214,10 +211,11 @@ export class RequestHandler {
     message = this.sanitizeMessage(message)
     // TODO: Do request with callsite instead, so we don't need to rethrow
     if (error.code) {
+      const meta = modelName ? { modelName, ...error.meta } : error.meta
       throw new PrismaClientKnownRequestError(message, {
         code: error.code,
         clientVersion: this.client._clientVersion,
-        meta: error.meta,
+        meta,
         batchRequestIdx: error.batchRequestIdx,
       })
     } else if (error.isPanic) {
@@ -245,7 +243,7 @@ export class RequestHandler {
     return message
   }
 
-  unpack(message: ProtocolMessage, data: unknown, dataPath: string[], unpacker?: Unpacker) {
+  unpack(data: unknown, dataPath: string[], unpacker?: Unpacker) {
     if (!data) {
       return data
     }
@@ -253,28 +251,14 @@ export class RequestHandler {
       data = data['data']
     }
 
-    const deserializeResponse = message.deserializeResponse(data, dataPath)
-    return unpacker ? unpacker(deserializeResponse) : deserializeResponse
-  }
+    if (!data) {
+      return data
+    }
+    const response = Object.values(data)[0]
+    const pathForGet = dataPath.filter((key) => key !== 'select' && key !== 'include')
+    const deserializeResponse = deserializeJsonResponse(deepGet(response, pathForGet))
 
-  applyResultExtensions({ result, modelName, args, extensions }: ApplyExtensionsParams) {
-    if (extensions.isEmpty() || result == null) {
-      return result
-    }
-    const model = this.client._baseDmmf.getModelMap()[modelName]
-    if (!model) {
-      return result
-    }
-    return visitQueryResult({
-      result,
-      args: args ?? {},
-      model,
-      dmmf: this.client._baseDmmf,
-      visitor(value, model, args) {
-        const modelName = dmmfToJSModelName(model.name)
-        return applyResultExtensions({ result: value, modelName, select: args.select, extensions })
-      },
-    })
+    return unpacker ? unpacker(deserializeResponse) : deserializeResponse
   }
 
   get [Symbol.toStringTag]() {
@@ -319,4 +303,38 @@ function getItxTransactionOptions<PayloadType>(
 
 function isMismatchingBatchIndex(error: any, transaction: PrismaPromiseTransaction | undefined) {
   return hasBatchIndex(error) && transaction?.kind === 'batch' && error.batchRequestIdx !== transaction.index
+}
+
+function isValidationError(error: PrismaClientKnownRequestError) {
+  return (
+    error.code === 'P2009' || // validation error
+    error.code === 'P2012' // required argument missing
+  )
+}
+
+/**
+ * Engine validation errors include extra segment for selectionPath - root query field.
+ * This function removes it (since it does not exist on js arguments). In case of `Union`
+ * error type, removes heading element from selectionPath of nested errors as well.
+ * @param error
+ * @returns
+ */
+function convertValidationError(error: EngineValidationError): EngineValidationError {
+  if (error.kind === 'Union') {
+    return {
+      kind: 'Union',
+      errors: error.errors.map(convertValidationError),
+    }
+  }
+
+  if (Array.isArray(error['selectionPath'])) {
+    const [, ...selectionPath] = error['selectionPath']
+
+    return {
+      ...error,
+      selectionPath,
+    } as EngineValidationError
+  }
+
+  return error
 }

@@ -1,7 +1,7 @@
 const path = require('path')
 const replaceAll = require('replace-string') // sindre's replaceAll polyfill
 const stripAnsi = require('strip-ansi')
-const { platformRegex } = require('./platformRegex')
+const { binaryTargetRegex } = require('./binaryTargetRegex')
 
 // Pipe utility
 const pipe =
@@ -51,7 +51,7 @@ function normalizeTsClientStackTrace(str) {
 }
 
 function removePlatforms(str) {
-  return str.replace(platformRegex, 'TEST_PLATFORM')
+  return str.replace(binaryTargetRegex, 'TEST_PLATFORM')
 }
 
 // When updating snapshots this is sensitive to OS
@@ -59,7 +59,7 @@ function removePlatforms(str) {
 // Note that on Windows the file name doesn't start with "lib".
 function normalizeNodeApiLibFilePath(str) {
   return str.replace(
-    /((lib)?query_engine-TEST_PLATFORM.)(.*)(.node)/,
+    /((lib)?query_engine-TEST_PLATFORM\.)(.*)(\.node)/g,
     'libquery_engine-TEST_PLATFORM.LIBRARY_TYPE.node',
   )
 }

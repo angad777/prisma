@@ -1,8 +1,10 @@
+import { ClientEngineType } from '@prisma/internals'
 import { U } from 'ts-toolbelt'
 
 import { TestSuiteMatrix } from './getTestSuiteInfo'
+import { ProviderFlavors, Providers, RelationModes } from './providers'
 import { setupTestSuiteMatrix, TestCallbackSuiteMeta } from './setupTestSuiteMatrix'
-import { ClientMeta, MatrixOptions } from './types'
+import { ClientMeta, CliMeta, MatrixOptions } from './types'
 
 type MergedMatrixParams<MatrixT extends TestSuiteMatrix> = U.IntersectOf<MatrixT[number][number]>
 
@@ -12,6 +14,24 @@ type DefineMatrixOptions<MatrixT extends TestSuiteMatrix> = {
   /** Allows to exclude certain matrix dimensions from tests */
   exclude?: (config: MergedMatrixParams<MatrixT>) => boolean
 }
+
+/**
+ * Tests factory function. Receives all matrix parameters, used for this suite as a moment
+ * and generic suite metadata as an arguments.
+ *
+ * @param setupDatabase Manually setup the database of a test. Can only be called if `skipDb` is true.
+ */
+type TestsFactoryFn<MatrixT extends TestSuiteMatrix> = (
+  suiteConfig: MergedMatrixParams<MatrixT> & {
+    provider: Providers
+    providerFlavor?: `${ProviderFlavors}`
+    relationMode?: `${RelationModes}`
+    engineType?: `${ClientEngineType}`
+  },
+  suiteMeta: TestCallbackSuiteMeta,
+  clientMeta: ClientMeta,
+  cliMeta: CliMeta,
+) => void
 
 export interface MatrixTestHelper<MatrixT extends TestSuiteMatrix> {
   matrix: () => MatrixT
@@ -23,10 +43,7 @@ export interface MatrixTestHelper<MatrixT extends TestSuiteMatrix> {
    * @param tests tests factory function. Receives all matrix parameters, used for this suite as a moment
    * and generic suite metadata as an arguments
    */
-  setupTestSuite(
-    tests: (suiteConfig: MergedMatrixParams<MatrixT>, suiteMeta: TestCallbackSuiteMeta, clientMeta: ClientMeta) => void,
-    options?: MatrixOptions,
-  ): void
+  setupTestSuite(tests: TestsFactoryFn<MatrixT>, options?: MatrixOptions): void
 
   /**
    * Function for defining test schema. Must be used in your `prisma/_schema.ts`. Return value

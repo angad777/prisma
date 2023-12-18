@@ -1,13 +1,10 @@
 import { checkIfEmpty } from '../_utils/relationMode/checkIfEmpty'
-import { ConditionalError } from '../_utils/relationMode/conditionalError'
 import testMatrix from './_matrix'
 
 /* eslint-disable @typescript-eslint/no-unused-vars, jest/no-identical-title */
 
 // @ts-ignore this is just for type checks
 declare let prisma: import('@prisma/client').PrismaClient
-
-const testIf = (condition: boolean) => (condition ? test : test.skip)
 
 // 1:1 relation
 async function createXItems({ count }) {
@@ -38,7 +35,7 @@ async function createXItems({ count }) {
 }
 
 testMatrix.setupTestSuite(
-  (suiteConfig, suiteMeta) => {
+  ({ engineType, providerFlavor }) => {
     describe('original', () => {
       beforeEach(async () => {
         // The order is important here

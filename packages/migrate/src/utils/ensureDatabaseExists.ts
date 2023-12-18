@@ -8,7 +8,7 @@ import {
   getSchemaDir,
   uriToCredentials,
 } from '@prisma/internals'
-import chalk from 'chalk'
+import { bold } from 'kleur/colors'
 
 import { ConnectorType } from './printDatasources'
 
@@ -19,7 +19,7 @@ export type PrettyProvider = 'MySQL' | 'PostgreSQL' | 'SQLite' | 'SQL Server' | 
 
 export type DatasourceInfo = {
   name?: string // from datasource name
-  prettyProvider?: PrettyProvider | string // pretty name for the provider
+  prettyProvider?: PrettyProvider // pretty name for the provider
   url?: string // from getConfig
   dbLocation?: string // host without credentials
   dbName?: string // database name
@@ -192,7 +192,7 @@ export async function ensureDatabaseExists(action: MigrateAction, schemaPath?: s
     let message = `${prettyProvider} database${credentials.database ? ` ${credentials.database} ` : ' '}created`
     const dbLocation = getDbLocation(credentials)
     if (dbLocation) {
-      message += ` at ${chalk.bold(getDbLocation(credentials))}`
+      message += ` at ${bold(dbLocation)}`
     }
 
     return message
@@ -219,9 +219,9 @@ export function getDbLocation(credentials: DatabaseCredentials): string | undefi
 /**
  * Return a pretty version of a "provider" (with uppercase characters)
  * @param provider
- * @returns PrettyProvider | string
+ * @returns PrettyProvider
  */
-export function prettifyProvider(provider: ConnectorType): PrettyProvider | string {
+export function prettifyProvider(provider: ConnectorType): PrettyProvider {
   switch (provider) {
     case 'mysql':
       return `MySQL`
@@ -233,10 +233,9 @@ export function prettifyProvider(provider: ConnectorType): PrettyProvider | stri
     case 'cockroachdb':
       return `CockroachDB`
     case 'sqlserver':
+    case 'jdbc:sqlserver':
       return `SQL Server`
     case 'mongodb':
       return `MongoDB`
-    default:
-      return provider
   }
 }
