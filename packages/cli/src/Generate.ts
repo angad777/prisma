@@ -249,9 +249,10 @@ This might lead to unexpected behavior.
 Please make sure they have the same version.`
             : ''
 
-        const tryAccelerateMessage = `Deploying your app to serverless or edge functions?
-Try Prisma Accelerate for connection pooling and caching.
-${link('https://pris.ly/cli/accelerate')}`
+        const tryAccelerateMessage = `Supercharge your Prisma Client with global database caching,
+scalable connection pooling and real-time database events.
+Explore Prisma Accelerate: ${link('https://pris.ly/cli/-accelerate')}
+Explore Prisma Pulse: ${link('https://pris.ly/cli/-pulse')}`
 
         const boxedTryAccelerateMessage = drawBox({
           height: tryAccelerateMessage.split('\n').length,
@@ -278,6 +279,34 @@ See other ways of importing Prisma Client: ${link('http://pris.ly/d/importing-cl
 
 ${boxedTryAccelerateMessage}
 ${getHardcodedUrlWarning(config)}${breakingChangesStr}${versionsWarning}`
+        if (generator?.previewFeatures.includes('driverAdapters')) {
+          if (generator?.isCustomOutput && isDeno) {
+            hint = `
+${bold('Start using Prisma Client')}
+${dim('```')}
+${highlightTS(`\
+import { PrismaClient } from '${importPath}/${isDeno ? 'deno/' : ''}edge${isDeno ? '.ts' : ''}'
+const prisma = new PrismaClient()`)}
+${dim('```')}
+
+More information: https://pris.ly/d/client`
+          } else {
+            hint = `
+${bold('Start using Prisma Client')}
+${dim('```')}
+${highlightTS(`\
+import { PrismaClient } from '${importPath}'
+const prisma = new PrismaClient()`)}
+${dim('```')}
+
+More information: https://pris.ly/d/client`
+          }
+
+          hint = `${hint}
+
+${boxedTryAccelerateMessage}
+${getHardcodedUrlWarning(config)}${breakingChangesStr}${versionsWarning}`
+        }
       }
 
       const message = '\n' + this.logText + (hasJsClient && !this.hasGeneratorErrored ? hint : '')

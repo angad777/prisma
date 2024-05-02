@@ -3,7 +3,7 @@ import { assertNever } from '@prisma/internals'
 import { randomBytes } from 'crypto'
 import { expectTypeOf } from 'expect-type'
 
-import { ProviderFlavors, Providers } from '../_utils/providers'
+import { AdapterProviders, Providers } from '../_utils/providers'
 import { wait } from '../_utils/tests/wait'
 import { waitFor } from '../_utils/tests/waitFor'
 import { NewPrismaClient } from '../_utils/types'
@@ -23,7 +23,7 @@ const randomId3 = randomBytes(12).toString('hex')
 jest.retryTimes(3)
 
 testMatrix.setupTestSuite(
-  ({ provider, providerFlavor }) => {
+  ({ provider, driverAdapter }) => {
     beforeEach(async () => {
       prisma = newPrismaClient({
         log: [{ emit: 'event', level: 'query' }],
@@ -369,10 +369,10 @@ testMatrix.setupTestSuite(
 
       expect(data).toMatchInlineSnapshot(`
         {
-          email: jane@doe.io,
-          firstName: Jane,
-          id: <redacted>,
-          lastName: Doe,
+          "email": "jane@doe.io",
+          "firstName": "Jane",
+          "id": "<redacted>",
+          "lastName": "Doe",
         }
       `)
       await waitFor(() => expect(fnEmitter).toHaveBeenCalledTimes(1))
@@ -417,10 +417,10 @@ testMatrix.setupTestSuite(
 
       expect(data).toMatchInlineSnapshot(`
         {
-          email: <redacted>,
-          firstName: Jane,
-          id: <redacted>,
-          lastName: Doe,
+          "email": "<redacted>",
+          "firstName": "Jane",
+          "id": "<redacted>",
+          "lastName": "Doe",
         }
       `)
       await waitFor(() => expect(fnEmitter).toHaveBeenCalledTimes(1))
@@ -468,10 +468,10 @@ testMatrix.setupTestSuite(
         expect(data).toMatchInlineSnapshot(`
           [
             {
-              email: <redacted>,
-              firstName: Jane,
-              id: <redacted>,
-              lastName: Doe,
+              "email": "<redacted>",
+              "firstName": "Jane",
+              "id": "<redacted>",
+              "lastName": "Doe",
             },
             null,
           ]
@@ -514,7 +514,7 @@ testMatrix.setupTestSuite(
 
         expect(data).toMatchInlineSnapshot(`
           {
-            lastName: Doe,
+            "lastName": "Doe",
           }
         `)
         await waitFor(() => {
@@ -530,10 +530,12 @@ testMatrix.setupTestSuite(
     )
 
     // TODO: skipped for PlanetScale adapter because of https://github.com/prisma/team-orm/issues/495
+    // TODO: skipped for D1 - unskip once https://github.com/prisma/team-orm/issues/997 is done
     testIf(
       provider !== Providers.MONGODB &&
         process.platform !== 'win32' &&
-        providerFlavor !== ProviderFlavors.JS_PLANETSCALE,
+        driverAdapter !== AdapterProviders.JS_PLANETSCALE &&
+        driverAdapter !== AdapterProviders.JS_D1,
     )('hijacking a batch transaction into another one with a simple call', async () => {
       const fnEmitter = jest.fn()
 
@@ -560,13 +562,13 @@ testMatrix.setupTestSuite(
       ])
 
       expect(data).toMatchInlineSnapshot(`
-          [
-            {
-              lastName: Doe,
-            },
-            null,
-          ]
-        `)
+        [
+          {
+            "lastName": "Doe",
+          },
+          null,
+        ]
+      `)
       await waitFor(() => {
         // user.findFirst 4 queries + post.findFirst 1 query
         expect(fnEmitter).toHaveBeenCalledTimes(5)
@@ -589,10 +591,12 @@ testMatrix.setupTestSuite(
     })
 
     // TODO: skipped for PlanetScale adapter because of https://github.com/prisma/team-orm/issues/495
+    // TODO: skipped for D1 - unskip once https://github.com/prisma/team-orm/issues/997 is done
     testIf(
       provider !== Providers.MONGODB &&
         process.platform !== 'win32' &&
-        providerFlavor !== ProviderFlavors.JS_PLANETSCALE,
+        driverAdapter !== AdapterProviders.JS_PLANETSCALE &&
+        driverAdapter !== AdapterProviders.JS_D1,
     )('hijacking a batch transaction into another one with multiple calls', async () => {
       const fnEmitter = jest.fn()
 
@@ -649,14 +653,14 @@ testMatrix.setupTestSuite(
       ])
 
       expect(data).toMatchInlineSnapshot(`
-          [
-            {
-              firstName: <redacted>,
-              lastName: <redacted>,
-            },
-            null,
-          ]
-        `)
+        [
+          {
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+          },
+          null,
+        ]
+      `)
 
       await waitFor(() => {
         // user.findFirst 4 queries + post.findFirst 1 query
@@ -736,7 +740,7 @@ testMatrix.setupTestSuite(
             async $allOperations({ args, query, operation, model }) {
               expectTypeOf(args).not.toBeAny()
               expectTypeOf(query).toBeFunction()
-              // @ts-test-if: provider !== Providers.SQLITE && provider !== Providers.MONGODB
+              // @ts-test-if: provider !== Providers.MONGODB
               expectTypeOf(operation).toEqualTypeOf<
                 | 'findUnique'
                 | 'findUniqueOrThrow'
@@ -801,7 +805,7 @@ testMatrix.setupTestSuite(
             async $allOperations({ args, query, operation, model }) {
               expectTypeOf(args).not.toBeAny()
               expectTypeOf(query).toBeFunction()
-              // @ts-test-if: provider !== Providers.SQLITE && provider !== Providers.MONGODB
+              // @ts-test-if: provider !== Providers.MONGODB
               expectTypeOf(operation).toEqualTypeOf<
                 | 'findUnique'
                 | 'findUniqueOrThrow'
@@ -860,7 +864,7 @@ testMatrix.setupTestSuite(
         },
       })
 
-      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`All is lost!`)
+      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`"All is lost!"`)
     })
 
     test('errors in with no extension name', async () => {
@@ -874,7 +878,7 @@ testMatrix.setupTestSuite(
         },
       })
 
-      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`All is lost!`)
+      await expect(xprisma.user.findFirst({})).rejects.toMatchInlineSnapshot(`"All is lost!"`)
     })
 
     test('empty args becomes an empty object', async () => {
@@ -1233,13 +1237,10 @@ testMatrix.setupTestSuite(
                 return data
               },
 
-              // @ts-test-if: provider !== Providers.SQLITE
               async createMany({ args, query, operation }) {
                 const data = await query(args)
 
-                // @ts-test-if: provider !== Providers.SQLITE
                 expectTypeOf(operation).toEqualTypeOf<'createMany'>()
-                // @ts-test-if: provider !== Providers.SQLITE
                 expectTypeOf(args).toEqualTypeOf<PrismaNamespace.UserCreateManyArgs>()
                 expectTypeOf(data).toMatchTypeOf<OptionalDeep<PrismaNamespace.BatchPayload>>()
 
@@ -1383,14 +1384,10 @@ testMatrix.setupTestSuite(
                   return data
                 }
 
-                // @ts-test-if: provider !== Providers.SQLITE
                 if (operation === 'createMany') {
-                  // @ts-test-if: provider !== Providers.SQLITE
                   const data = await query(args)
 
-                  // @ts-test-if: provider !== Providers.SQLITE
                   expectTypeOf(operation).toEqualTypeOf<'createMany'>()
-                  // @ts-test-if: provider !== Providers.SQLITE
                   expectTypeOf(args).toEqualTypeOf<PrismaNamespace.UserCreateManyArgs>()
                   expectTypeOf(data).toMatchTypeOf<OptionalDeep<PrismaNamespace.BatchPayload>>()
 
@@ -1541,14 +1538,10 @@ testMatrix.setupTestSuite(
 
                   return data
                 }
-                // @ts-test-if: provider !== Providers.SQLITE
                 if (model === 'User' && operation === 'createMany') {
-                  // @ts-test-if: provider !== Providers.SQLITE
                   const data = await query(args)
 
-                  // @ts-test-if: provider !== Providers.SQLITE
                   expectTypeOf(operation).toEqualTypeOf<'createMany'>()
-                  // @ts-test-if: provider !== Providers.SQLITE
                   expectTypeOf(args).toEqualTypeOf<PrismaNamespace.UserCreateManyArgs>()
                   expectTypeOf(data).toMatchTypeOf<OptionalDeep<PrismaNamespace.BatchPayload>>()
 
@@ -1699,15 +1692,12 @@ testMatrix.setupTestSuite(
                 return data
               },
 
-              // @ts-test-if: provider !== Providers.SQLITE
               async createMany({ args, query, operation, model }) {
                 if (model !== 'User') return query(args)
 
                 const data = await query(args)
 
-                // @ts-test-if: provider !== Providers.SQLITE
                 expectTypeOf(operation).toEqualTypeOf<'createMany'>()
-                // @ts-test-if: provider !== Providers.SQLITE
                 expectTypeOf(args).toEqualTypeOf<PrismaNamespace.UserCreateManyArgs>()
                 expectTypeOf(data).toMatchTypeOf<OptionalDeep<PrismaNamespace.BatchPayload>>()
 
@@ -1844,8 +1834,7 @@ testMatrix.setupTestSuite(
 
                 return data
               },
-              // TODO not sure why it is not failing here on SQLite
-              // @ts-test-if: provider === Providers.MONGODB || provider === Providers.SQLITE
+              // @ts-test-if: provider === Providers.MONGODB
               async aggregateRaw({ args, query, operation, model }) {
                 if (model !== 'User') return query(args)
 
