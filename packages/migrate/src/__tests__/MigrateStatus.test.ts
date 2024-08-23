@@ -23,8 +23,15 @@ describe('common', () => {
     ctx.fixture('empty')
     const result = MigrateStatus.new().parse([])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-      "Could not find a schema.prisma file that is required for this command.
-      You can either provide it with --schema, set it as \`prisma.schema\` in your package.json or put it into the default location ./prisma/schema.prisma https://pris.ly/d/prisma-schema-location"
+      "Could not find Prisma Schema that is required for this command.
+      You can either provide it with \`--schema\` argument, set it as \`prisma.schema\` in your package.json or put it into the default location.
+      Checked following paths:
+
+      schema.prisma: file not found
+      prisma/schema.prisma: file not found
+      prisma/schema: directory not found
+
+      See also https://pris.ly/d/prisma-schema-location"
     `)
   })
 })
@@ -33,7 +40,7 @@ describe('sqlite', () => {
   it('should fail if no sqlite db - empty schema', async () => {
     ctx.fixture('schema-only-sqlite')
     const result = MigrateStatus.new().parse(['--schema=./prisma/empty.prisma'])
-    await expect(result).rejects.toMatchInlineSnapshot(`"P1003: Database dev.db does not exist at dev.db"`)
+    await expect(result).rejects.toMatchInlineSnapshot(`"P1003: Database \`dev.db\` does not exist at \`dev.db\`."`)
 
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
       "Prisma schema loaded from prisma/empty.prisma
@@ -114,6 +121,22 @@ describe('sqlite', () => {
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
       "Prisma schema loaded from prisma/schema.prisma
       Datasource "my_db": SQLite database "dev.db" at "file:dev.db"
+
+      1 migration found in prisma/migrations
+
+      "
+    `)
+    expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchSnapshot()
+  })
+
+  it('schema-folder-db-exists', async () => {
+    ctx.fixture('schema-folder-sqlite-db-exists')
+    const result = MigrateStatus.new().parse([])
+    await expect(result).resolves.toMatchInlineSnapshot(`"Database schema is up to date!"`)
+
+    expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
+      "Prisma schema loaded from prisma/schema
+      Datasource "my_db": SQLite database "dev.db" at "file:../dev.db"
 
       1 migration found in prisma/migrations
 
@@ -253,9 +276,9 @@ describe('postgresql', () => {
     ctx.fixture('schema-only-postgresql')
     const result = MigrateStatus.new().parse(['--schema=./prisma/invalid-url.prisma'])
     await expect(result).rejects.toMatchInlineSnapshot(`
-      "P1001: Can't reach database server at \`doesnotexist\`:\`5432\`
+      "P1001: Can't reach database server at \`doesnotexist:5432\`
 
-      Please make sure your database server is running at \`doesnotexist\`:\`5432\`."
+      Please make sure your database server is running at \`doesnotexist:5432\`."
     `)
 
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`

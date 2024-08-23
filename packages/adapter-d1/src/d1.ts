@@ -1,5 +1,6 @@
 import { D1Database, D1Response } from '@cloudflare/workers-types'
 import {
+  ConnectionInfo,
   Debug,
   DriverAdapter,
   err,
@@ -80,12 +81,12 @@ class D1Queryable<ClientT extends StdClient> implements Queryable {
     debug(`${tag} %O`, query)
 
     const res = await this.performIO(query, true)
-    return res.map((result) => (result as D1Response).meta.rows_written ?? 0)
+    return res.map((result) => (result as D1Response).meta.changes ?? 0)
   }
 
   private async performIO(query: Query, executeRaw = false): Promise<Result<PerformIOResult>> {
     try {
-      query.args = query.args.map((arg) => cleanArg(arg))
+      query.args = query.args.map((arg, i) => cleanArg(arg, query.argTypes[i]))
 
       const stmt = this.client.prepare(query.sql).bind(...query.args)
 
@@ -152,11 +153,17 @@ export class PrismaD1 extends D1Queryable<StdClient> implements DriverAdapter {
    * await prisma.$transaction([ ...moreQueries ])
    * ```
    */
-  warnOnce = (key: string, message: string, ...args: unknown[]) => {
+  private warnOnce = (key: string, message: string, ...args: unknown[]) => {
     if (!this.alreadyWarned.has(key)) {
       this.alreadyWarned.add(key)
       console.info(`${this.tags.warn} ${message}`, ...args)
     }
+  }
+
+  getConnectionInfo(): Result<ConnectionInfo> {
+    return ok({
+      maxBindValues: 98,
+    })
   }
 
   // eslint-disable-next-line @typescript-eslint/require-await

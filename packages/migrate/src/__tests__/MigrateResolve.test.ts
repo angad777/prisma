@@ -24,8 +24,15 @@ describe('common', () => {
     ctx.fixture('empty')
     const result = MigrateResolve.new().parse([])
     await expect(result).rejects.toThrowErrorMatchingInlineSnapshot(`
-      "Could not find a schema.prisma file that is required for this command.
-      You can either provide it with --schema, set it as \`prisma.schema\` in your package.json or put it into the default location ./prisma/schema.prisma https://pris.ly/d/prisma-schema-location"
+      "Could not find Prisma Schema that is required for this command.
+      You can either provide it with \`--schema\` argument, set it as \`prisma.schema\` in your package.json or put it into the default location.
+      Checked following paths:
+
+      schema.prisma: file not found
+      prisma/schema.prisma: file not found
+      prisma/schema: directory not found
+
+      See also https://pris.ly/d/prisma-schema-location"
     `)
   })
   it('should fail if no --applied or --rolled-back', async () => {
@@ -50,7 +57,7 @@ describe('sqlite', () => {
   it('should fail if no sqlite db - empty schema', async () => {
     ctx.fixture('schema-only-sqlite')
     const result = MigrateResolve.new().parse(['--schema=./prisma/empty.prisma', '--applied=something_applied'])
-    await expect(result).rejects.toMatchInlineSnapshot(`"P1003: Database dev.db does not exist at dev.db"`)
+    await expect(result).rejects.toMatchInlineSnapshot(`"P1003: Database \`dev.db\` does not exist at \`dev.db\`."`)
 
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
       "Prisma schema loaded from prisma/empty.prisma
@@ -105,6 +112,19 @@ describe('sqlite', () => {
       Datasource "my_db": SQLite database "dev.db" at "file:dev.db"
 
       Migration 20201231000000_failed marked as applied.
+      "
+    `)
+  })
+
+  it('--applied should work on a failed migration (schema folder)', async () => {
+    ctx.fixture('schema-folder-sqlite-migration-failed')
+    const result = MigrateResolve.new().parse(['--applied', '20240527130802_init'])
+    await expect(result).resolves.toMatchInlineSnapshot(`""`)
+    expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
+      "Prisma schema loaded from prisma/schema
+      Datasource "my_db": SQLite database "dev.db" at "file:../dev.db"
+
+      Migration 20201231000000_init marked as applied.
       "
     `)
   })
@@ -178,9 +198,9 @@ describe('postgresql', () => {
 
     const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
     await expect(result).rejects.toMatchInlineSnapshot(`
-      "P1001: Can't reach database server at \`doesnotexist\`:\`5432\`
+      "P1001: Can't reach database server at \`doesnotexist:5432\`
 
-      Please make sure your database server is running at \`doesnotexist\`:\`5432\`."
+      Please make sure your database server is running at \`doesnotexist:5432\`."
     `)
 
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`
@@ -200,9 +220,9 @@ describeIf(!process.env.TEST_SKIP_COCKROACHDB)('cockroachdb', () => {
 
     const result = MigrateResolve.new().parse(['--schema=./prisma/invalid-url.prisma', '--applied=something_applied'])
     await expect(result).rejects.toMatchInlineSnapshot(`
-      "P1001: Can't reach database server at \`something.cockroachlabs.cloud\`:\`26257\`
+      "P1001: Can't reach database server at \`something.cockroachlabs.cloud:26257\`
 
-      Please make sure your database server is running at \`something.cockroachlabs.cloud\`:\`26257\`."
+      Please make sure your database server is running at \`something.cockroachlabs.cloud:26257\`."
     `)
 
     expect(captureStdout.getCapturedText().join('')).toMatchInlineSnapshot(`

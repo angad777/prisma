@@ -88,7 +88,7 @@ describe('postgresql-multischema', () => {
       "Prisma schema validation - (get-config wasm)
       Error code: P1012
       error: If provided, the schemas array can not be empty.
-        -->  schema.prisma:4
+        -->  with-schemas-in-datasource-0-value.prisma:4
          | 
        3 |   url      = env("TEST_POSTGRES_URI_MIGRATE")
        4 |   schemas  = []
@@ -114,7 +114,7 @@ describe('postgresql-multischema', () => {
       "
       // *** WARNING ***
       // 
-      // These items were renamed due to their names being duplicates in the Prisma Schema Language:
+      // These items were renamed due to their names being duplicates in the Prisma schema:
       //   - Type: "enum", name: "base_status"
       //   - Type: "enum", name: "transactional_status"
       //   - Type: "model", name: "base_some_table"
@@ -226,7 +226,7 @@ describe('postgresql-multischema', () => {
       "
       // *** WARNING ***
       // 
-      // These items were renamed due to their names being duplicates in the Prisma Schema Language:
+      // These items were renamed due to their names being duplicates in the Prisma schema:
       //   - Type: "enum", name: "base_status"
       //   - Type: "enum", name: "transactional_status"
       //   - Type: "model", name: "base_some_table"

@@ -1,8 +1,7 @@
 import type { BinaryTarget } from '@prisma/get-platform'
-import { ClientEngineType, getClientEngineType, getEnvPaths, pathToPosix } from '@prisma/internals'
+import { ClientEngineType, EnvPaths, getClientEngineType, pathToPosix } from '@prisma/internals'
 import ciInfo from 'ci-info'
 import crypto from 'crypto'
-import { readFile } from 'fs/promises'
 import indent from 'indent-string'
 import path from 'path'
 import { O } from 'ts-toolbelt'
@@ -27,7 +26,7 @@ import { Count } from './Count'
 import { DefaultArgsAliases } from './DefaultArgsAliases'
 import { Enum } from './Enum'
 import { FieldRefInput } from './FieldRefInput'
-import { type Generatable } from './Generatable'
+import { type Generable } from './Generable'
 import { GenerateContext } from './GenerateContext'
 import { InputType } from './Input'
 import { Model } from './Model'
@@ -50,9 +49,12 @@ export type TSClientOptions = O.Required<GenerateClientOptions, 'runtimeBase'> &
   reusedTs?: string // the entrypoint to reuse
   /** When js doesn't need to be regenerated */
   reusedJs?: string // the entrypoint to reuse
+
+  /** result of getEnvPaths call */
+  envPaths: EnvPaths
 }
 
-export class TSClient implements Generatable {
+export class TSClient implements Generable {
   protected readonly dmmf: DMMFHelper
   protected readonly genericsInfo: GenericArgsInfo
 
@@ -61,27 +63,26 @@ export class TSClient implements Generatable {
     this.genericsInfo = new GenericArgsInfo(this.dmmf)
   }
 
-  public async toJS(): Promise<string> {
+  public toJS(): string {
     const {
       edge,
       wasm,
       binaryPaths,
       generator,
       outputDir,
-      schemaPath,
+      datamodel: inlineSchema,
       runtimeBase,
       runtimeNameJs,
       datasources,
       deno,
       copyEngine = true,
       reusedJs,
+      envPaths,
     } = this.options
 
     if (reusedJs) {
       return `module.exports = { ...require('${reusedJs}') }`
     }
-
-    const envPaths = getEnvPaths(schemaPath, { cwd: outputDir })
 
     const relativeEnvPaths = {
       rootEnvPath: envPaths.rootEnvPath && pathToPosix(path.relative(outputDir, envPaths.rootEnvPath)),
@@ -97,15 +98,16 @@ export class TSClient implements Generatable {
         ? (Object.keys(binaryPaths.libqueryEngine ?? {}) as BinaryTarget[])
         : (Object.keys(binaryPaths.queryEngine ?? {}) as BinaryTarget[])
 
-    const inlineSchema = await readFile(schemaPath, 'utf8')
     const inlineSchemaHash = crypto
       .createHash('sha256')
       .update(Buffer.from(inlineSchema, 'utf8').toString('base64'))
       .digest('hex')
+
+    const datasourceFilePath = datasources[0].sourceFilePath
     const config: Omit<GetPrismaClientConfig, 'runtimeDataModel' | 'dirname'> = {
       generator,
       relativeEnvPaths,
-      relativePath: pathToPosix(path.relative(outputDir, path.dirname(schemaPath))),
+      relativePath: pathToPosix(path.relative(outputDir, path.dirname(datasourceFilePath))),
       clientVersion: this.options.clientVersion,
       engineVersion: this.options.engineVersion,
       datasourceNames: datasources.map((d) => d.name),
@@ -130,7 +132,7 @@ ${buildRequirePath(edge)}
 /**
  * Enums
  */
-${this.dmmf.schema.enumTypes.prisma.map((type) => new Enum(type, true).toJS()).join('\n\n')}
+${this.dmmf.schema.enumTypes.prisma?.map((type) => new Enum(type, true).toJS()).join('\n\n')}
 ${this.dmmf.schema.enumTypes.model?.map((type) => new Enum(type, false).toJS()).join('\n\n') ?? ''}
 
 ${new Enum(
@@ -175,13 +177,11 @@ ${buildNFTAnnotations(edge || !copyEngine, clientEngineType, binaryTargets, rela
     })
 
     const prismaClientClass = new PrismaClientClass(
-      this.dmmf,
+      context,
       this.options.datasources,
       this.options.outputDir,
       this.options.runtimeNameTs,
       this.options.browser,
-      this.options.generator,
-      path.dirname(this.options.schemaPath),
     )
 
     const commonCode = commonCodeTS(this.options)
@@ -194,7 +194,7 @@ ${buildNFTAnnotations(edge || !copyEngine, clientEngineType, binaryTargets, rela
 
     // TODO: Make this code more efficient and directly return 2 arrays
 
-    const prismaEnums = this.dmmf.schema.enumTypes.prisma.map((type) => new Enum(type, true).toTS())
+    const prismaEnums = this.dmmf.schema.enumTypes.prisma?.map((type) => new Enum(type, true).toTS())
 
     const modelEnums: string[] = []
     const modelEnumsAliases: string[] = []
@@ -211,7 +211,7 @@ ${buildNFTAnnotations(edge || !copyEngine, clientEngineType, binaryTargets, rela
     const fieldRefs = this.dmmf.schema.fieldRefTypes.prisma?.map((type) => new FieldRefInput(type).toTS()) ?? []
 
     const countTypes: Count[] = this.dmmf.schema.outputObjectTypes.prisma
-      .filter((t) => t.name.endsWith('CountOutputType'))
+      ?.filter((t) => t.name.endsWith('CountOutputType'))
       .map((t) => new Count(t, context))
 
     const code = `
@@ -269,7 +269,7 @@ ${modelAndTypes.map((model) => model.toTS()).join('\n')}
  * Enums
  */
 
-${prismaEnums.join('\n\n')}
+${prismaEnums?.join('\n\n')}
 ${
   fieldRefs.length > 0
     ? `
@@ -285,7 +285,7 @@ ${fieldRefs.join('\n\n')}`
  */
 
 ${this.dmmf.inputObjectTypes.prisma
-  .reduce((acc, inputType) => {
+  ?.reduce((acc, inputType) => {
     if (inputType.name.includes('Json') && inputType.name.includes('Filter')) {
       const needsGeneric = this.genericsInfo.typeNeedsGenericModelArg(inputType)
       const innerName = needsGeneric ? `${inputType.name}Base<$PrismaModel>` : `${inputType.name}Base`
@@ -345,7 +345,7 @@ export const dmmf: runtime.BaseDMMF
  * Enums
  */
 
-${this.dmmf.schema.enumTypes.prisma.map((type) => new Enum(type, true).toJS()).join('\n\n')}
+${this.dmmf.schema.enumTypes.prisma?.map((type) => new Enum(type, true).toJS()).join('\n\n')}
 ${this.dmmf.schema.enumTypes.model?.map((type) => new Enum(type, false).toJS()).join('\n\n') ?? ''}
 
 ${new Enum(

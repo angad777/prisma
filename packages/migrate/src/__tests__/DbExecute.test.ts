@@ -84,7 +84,9 @@ describe('db execute', () => {
         await DbExecute.new().parse(['--file=./script.sql', '--schema=./doesnoexists.schema'])
       } catch (e) {
         expect(e.code).toEqual(undefined)
-        expect(e.message).toMatchInlineSnapshot(`"Provided --schema at ./doesnoexists.schema doesn't exist."`)
+        expect(e.message).toMatchInlineSnapshot(
+          `"Could not load \`--schema\` from provided path \`doesnoexists.schema\`: file or directory not found"`,
+        )
       }
     })
   })
@@ -142,6 +144,14 @@ DROP TABLE 'test-dbexecute';`
 
       fs.writeFileSync('script.sql', sqlScript)
       const result = DbExecute.new().parse(['--schema=./prisma/schema.prisma', '--file=./script.sql'])
+      await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
+    })
+
+    it('should pass with --file --schema folder', async () => {
+      ctx.fixture('schema-folder-sqlite')
+
+      fs.writeFileSync('script.sql', sqlScript)
+      const result = DbExecute.new().parse(['--schema=./prisma/schema', '--file=./script.sql'])
       await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
     })
 
@@ -287,6 +297,14 @@ DROP SCHEMA "test-dbexecute";`
       await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
     })
 
+    it('should pass with --file --schema folder', async () => {
+      ctx.fixture('schema-folder-postgres')
+
+      fs.writeFileSync('script.sql', sqlScript)
+      const result = DbExecute.new().parse(['--schema=./prisma/schema', '--file=./script.sql'])
+      await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
+    })
+
     it('should use env var from .env file', async () => {
       ctx.fixture('schema-only-postgresql')
 
@@ -295,9 +313,9 @@ DROP SCHEMA "test-dbexecute";`
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1001
 
-        Can't reach database server at \`fromdotenvdoesnotexist\`:\`5432\`
+        Can't reach database server at \`fromdotenvdoesnotexist:5432\`
 
-        Please make sure your database server is running at \`fromdotenvdoesnotexist\`:\`5432\`.
+        Please make sure your database server is running at \`fromdotenvdoesnotexist:5432\`.
         "
       `)
     })
@@ -416,9 +434,9 @@ COMMIT;`,
         expect(e.message).toMatchInlineSnapshot(`
           "P1001
 
-          Can't reach database server at \`doesnotexist\`:\`5432\`
+          Can't reach database server at \`doesnotexist:5432\`
 
-          Please make sure your database server is running at \`doesnotexist\`:\`5432\`.
+          Please make sure your database server is running at \`doesnotexist:5432\`.
           "
         `)
       }
@@ -508,6 +526,14 @@ DROP SCHEMA "test-dbexecute";`
       await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
     }, 10_000)
 
+    it('should pass with --file --schema folder', async () => {
+      ctx.fixture('schema-folder-cockroachdb')
+
+      fs.writeFileSync('script.sql', sqlScript)
+      const result = DbExecute.new().parse(['--schema=./prisma/schema', '--file=./script.sql'])
+      await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
+    }, 10_000)
+
     it('should use env var from .env file', async () => {
       ctx.fixture('schema-only-cockroachdb')
 
@@ -516,9 +542,9 @@ DROP SCHEMA "test-dbexecute";`
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1001
 
-        Can't reach database server at \`fromdotenvdoesnotexist\`:\`26257\`
+        Can't reach database server at \`fromdotenvdoesnotexist:26257\`
 
-        Please make sure your database server is running at \`fromdotenvdoesnotexist\`:\`26257\`.
+        Please make sure your database server is running at \`fromdotenvdoesnotexist:26257\`.
         "
       `)
     }, 10_000)
@@ -630,9 +656,9 @@ COMMIT;`,
         expect(e.message).toMatchInlineSnapshot(`
           "P1001
 
-          Can't reach database server at \`doesnotexist\`:\`5432\`
+          Can't reach database server at \`doesnotexist:5432\`
 
-          Please make sure your database server is running at \`doesnotexist\`:\`5432\`.
+          Please make sure your database server is running at \`doesnotexist:5432\`.
           "
         `)
       }
@@ -696,6 +722,14 @@ DROP DATABASE \`test-dbexecute\`;`
 
       fs.writeFileSync('script.sql', sqlScript)
       const result = DbExecute.new().parse(['--schema=./prisma/schema.prisma', '--file=./script.sql'])
+      await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
+    })
+
+    it('should pass with --file --schema folder', async () => {
+      ctx.fixture('schema-folder-mysql')
+
+      fs.writeFileSync('script.sql', sqlScript)
+      const result = DbExecute.new().parse(['--schema=./prisma/schema', '--file=./script.sql'])
       await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
     })
 
@@ -790,9 +824,9 @@ COMMIT;`,
         expect(e.message).toMatchInlineSnapshot(`
           "P1001
 
-          Can't reach database server at \`doesnotexist\`:\`3306\`
+          Can't reach database server at \`doesnotexist:3306\`
 
-          Please make sure your database server is running at \`doesnotexist\`:\`3306\`.
+          Please make sure your database server is running at \`doesnotexist:3306\`.
           "
         `)
       }
@@ -880,6 +914,14 @@ DROP DATABASE "test-dbexecute";`
 
       fs.writeFileSync('script.sql', sqlScript)
       const result = DbExecute.new().parse(['--schema=./prisma/schema.prisma', '--file=./script.sql'])
+      await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
+    })
+
+    it('should pass with --file --schema folder', async () => {
+      ctx.fixture('schema-folder-sqlserver')
+
+      fs.writeFileSync('script.sql', sqlScript)
+      const result = DbExecute.new().parse(['--schema=./prisma/schema', '--file=./script.sql'])
       await expect(result).resolves.toMatchInlineSnapshot(`"Script executed successfully."`)
     })
 
@@ -993,9 +1035,9 @@ COMMIT;`,
         expect(e.message).toMatchInlineSnapshot(`
           "P1001
 
-          Can't reach database server at \`doesnotexist\`:\`1433\`
+          Can't reach database server at \`doesnotexist:1433\`
 
-          Please make sure your database server is running at \`doesnotexist\`:\`1433\`.
+          Please make sure your database server is running at \`doesnotexist:1433\`.
           "
         `)
       }

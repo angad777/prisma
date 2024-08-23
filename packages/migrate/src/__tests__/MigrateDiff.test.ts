@@ -217,7 +217,9 @@ describe('migrate diff', () => {
         await MigrateDiff.new().parse(['--from-schema-datasource=./doesnoexists.prisma', '--to-empty'])
       } catch (e) {
         expect(e.code).toEqual(undefined)
-        expect(e.message).toContain(`Error trying to read Prisma schema file at`)
+        expect(e.message).toMatchInlineSnapshot(
+          `"Could not load \`--from-schema-datasource\` from provided path \`doesnoexists.prisma\`: file or directory not found"`,
+        )
       }
     })
 
@@ -246,7 +248,7 @@ describe('migrate diff', () => {
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1003
 
-        Database doesnotexists.db does not exist at doesnotexists.db
+        Database \`doesnotexists.db\` does not exist at \`doesnotexists.db\`.
         "
       `)
     })
@@ -257,7 +259,7 @@ describe('migrate diff', () => {
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1003
 
-        Database doesnotexists.db does not exist at doesnotexists.db
+        Database \`doesnotexists.db\` does not exist at \`doesnotexists.db\`.
         "
       `)
     })
@@ -268,7 +270,7 @@ describe('migrate diff', () => {
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1003
 
-        Database doesnotexists.db does not exist at ./something/doesnotexists.db
+        Database \`doesnotexists.db\` does not exist at \`./something/doesnotexists.db\`.
         "
       `)
       expect(ctx.mocked['console.error'].mock.calls.join('\n')).toMatchInlineSnapshot(`""`)
@@ -315,6 +317,21 @@ describe('migrate diff', () => {
         "
       `)
     })
+
+    it('should diff --from-empty --to-schema-datamodel=./prisma/schema (folder)', async () => {
+      ctx.fixture('schema-folder-sqlite')
+
+      const result = MigrateDiff.new().parse(['--from-empty', '--to-schema-datamodel=./prisma/schema'])
+      await expect(result).resolves.toMatchInlineSnapshot(`""`)
+      expect(captureStdout.getCapturedText().join('\n')).toMatchInlineSnapshot(`
+        "
+        [+] Added tables
+          - Blog
+          - User
+        "
+      `)
+    })
+
     it('should diff --from-empty --to-schema-datamodel=./prisma/schema.prisma --script', async () => {
       ctx.fixture('schema-only-sqlite')
 
@@ -346,6 +363,21 @@ describe('migrate diff', () => {
         "
       `)
     })
+
+    it('should diff --from-schema-datamodel=./prisma/schema (folder) --to-empty', async () => {
+      ctx.fixture('schema-folder-sqlite')
+
+      const result = MigrateDiff.new().parse(['--from-schema-datamodel=./prisma/schema', '--to-empty'])
+      await expect(result).resolves.toMatchInlineSnapshot(`""`)
+      expect(captureStdout.getCapturedText().join('\n')).toMatchInlineSnapshot(`
+        "
+        [-] Removed tables
+          - Blog
+          - User
+        "
+      `)
+    })
+
     it('should diff --from-schema-datamodel=./prisma/schema.prisma --to-empty --script', async () => {
       ctx.fixture('schema-only-sqlite')
 
@@ -632,9 +664,9 @@ describe('migrate diff', () => {
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1001
 
-        Can't reach database server at \`fromdotenvdoesnotexist\`:\`26257\`
+        Can't reach database server at \`fromdotenvdoesnotexist:26257\`
 
-        Please make sure your database server is running at \`fromdotenvdoesnotexist\`:\`26257\`.
+        Please make sure your database server is running at \`fromdotenvdoesnotexist:26257\`.
         "
       `)
     })
@@ -709,9 +741,9 @@ describe('migrate diff', () => {
       await expect(result).rejects.toMatchInlineSnapshot(`
         "P1001
 
-        Can't reach database server at \`fromdotenvdoesnotexist\`:\`5432\`
+        Can't reach database server at \`fromdotenvdoesnotexist:5432\`
 
-        Please make sure your database server is running at \`fromdotenvdoesnotexist\`:\`5432\`.
+        Please make sure your database server is running at \`fromdotenvdoesnotexist:5432\`.
         "
       `)
     })
