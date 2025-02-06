@@ -87,7 +87,7 @@ export type Error =
       type: string
     }
   | {
-      kind: 'Postgres'
+      kind: 'postgres'
       code: string
       severity: string
       message: string
@@ -96,13 +96,13 @@ export type Error =
       hint: string | undefined
     }
   | {
-      kind: 'Mysql'
+      kind: 'mysql'
       code: number
       message: string
       state: string
     }
   | {
-      kind: 'Sqlite'
+      kind: 'sqlite'
       /**
        * Sqlite extended error code: https://www.sqlite.org/rescode.html
        */
@@ -114,6 +114,8 @@ export type ConnectionInfo = {
   schemaName?: string
   maxBindValues?: number
 }
+
+export type Provider = 'mysql' | 'postgres' | 'sqlite'
 
 // Current list of official Prisma adapters
 // This list might get outdated over time.
@@ -128,7 +130,7 @@ const officialPrismaAdapters = [
 ] as const
 
 export interface Queryable {
-  readonly provider: 'mysql' | 'postgres' | 'sqlite'
+  readonly provider: Provider
   readonly adapterName: (typeof officialPrismaAdapters)[number] | (string & {})
 
   /**
@@ -149,11 +151,18 @@ export interface Queryable {
   executeRaw(params: Query): Promise<Result<number>>
 }
 
-export interface DriverAdapter extends Queryable {
+export interface TransactionContext extends Queryable {
   /**
    * Starts new transaction.
    */
   startTransaction(): Promise<Result<Transaction>>
+}
+
+export interface DriverAdapter extends Queryable {
+  /**
+   * Starts new transaction.
+   */
+  transactionContext(): Promise<Result<TransactionContext>>
 
   /**
    * Optional method that returns extra connection info

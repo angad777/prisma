@@ -25,7 +25,7 @@ import { ensureDir } from 'fs-extra'
 import { bold, dim, green, red } from 'kleur/colors'
 import path from 'path'
 import pkgUp from 'pkg-up'
-import { type O } from 'ts-toolbelt'
+import type { O } from 'ts-toolbelt'
 
 import clientPkg from '../../package.json'
 import type { DMMF as PrismaClientDMMF } from './dmmf-types'
@@ -210,7 +210,11 @@ export async function buildClient({
 
   const usesWasmRuntime = generator.previewFeatures.includes('driverAdapters')
 
+  // TODO: adjust below code
+
   if (usesWasmRuntime) {
+    const usesClientEngine = clientEngineType === ClientEngineType.Client
+
     // The trampoline client points to #main-entry-point (see below).  We use
     // imports similar to an exports map to ensure correct imports.❗ Before
     // going GA, please notify @millsp as some things can be cleaned up:
@@ -226,13 +230,18 @@ export async function buildClient({
     // In short: A lot can be simplified, but can only happen in GA & P6.
     fileMap['default.js'] = JS(trampolineTsClient)
     fileMap['default.d.ts'] = TS(trampolineTsClient)
-    fileMap['wasm-worker-loader.mjs'] = `export default import('./query_engine_bg.wasm')`
-    fileMap['wasm-edge-light-loader.mjs'] = `export default import('./query_engine_bg.wasm?module')`
+    if (usesClientEngine) {
+      fileMap['wasm-worker-loader.mjs'] = `export default import('./query_compiler_bg.wasm')`
+      fileMap['wasm-edge-light-loader.mjs'] = `export default import('./query_compiler_bg.wasm?module')`
+    } else {
+      fileMap['wasm-worker-loader.mjs'] = `export default import('./query_engine_bg.wasm')`
+      fileMap['wasm-edge-light-loader.mjs'] = `export default import('./query_engine_bg.wasm?module')`
+    }
 
     pkgJson['browser'] = 'default.js' // also point to the trampoline client otherwise it is picked up by cfw
     pkgJson['imports'] = {
-      // when `import('#wasm-engine-loader')` is called, it will be resolved to the correct file
-      '#wasm-engine-loader': {
+      // when `import('#wasm-engine-loader')` or `import('#wasm-compiler-loader')` is called, it will be resolved to the correct file
+      [usesClientEngine ? '#wasm-compiler-loader' : '#wasm-engine-loader']: {
         // Keys reference: https://runtime-keys.proposal.wintercg.org/#keys
 
         /**
@@ -507,12 +516,9 @@ export async function generateClient(options: GenerateClientOptions): Promise<vo
     !testMode
   ) {
     const suffix = provider === 'postgres' ? 'postgresql' : provider
-    await fs.copyFile(
-      path.join(runtimeDir, `query_engine_bg.${suffix}.wasm`),
-      path.join(outputDir, `query_engine_bg.wasm`),
-    )
-
-    await fs.copyFile(path.join(runtimeDir, `query_engine_bg.${suffix}.js`), path.join(outputDir, `query_engine_bg.js`))
+    const filename = clientEngineType === ClientEngineType.Client ? 'query_compiler_bg' : 'query_engine_bg'
+    await fs.copyFile(path.join(runtimeDir, `${filename}.${suffix}.wasm`), path.join(outputDir, `${filename}.wasm`))
+    await fs.copyFile(path.join(runtimeDir, `${filename}.${suffix}.js`), path.join(outputDir, `${filename}.js`))
   }
 
   try {
@@ -558,6 +564,8 @@ function validateDmmfAgainstDenylists(prismaClientDmmf: PrismaClientDMMF.Documen
       'PrismaClient',
       'Prisma',
       // JavaScript keywords
+      'async',
+      'await',
       'break',
       'case',
       'catch',
@@ -596,6 +604,7 @@ function validateDmmfAgainstDenylists(prismaClientDmmf: PrismaClientDMMF.Documen
       'throw',
       'true',
       'try',
+      'using',
       'typeof',
       'var',
       'void',
@@ -723,6 +732,16 @@ function getNodeRuntimeName(engineType: ClientEngineType) {
 
   if (engineType === ClientEngineType.Library) {
     return 'library'
+  }
+
+  if (engineType === ClientEngineType.Client) {
+    if (!process.env.PRISMA_UNSTABLE_CLIENT_ENGINE_TYPE) {
+      throw new Error(
+        'Unstable Feature: engineType="client" is in a proof of concept phase and not ready to be used publicly yet!',
+      )
+    }
+
+    return 'client'
   }
 
   assertNever(engineType, 'Unknown engine type')

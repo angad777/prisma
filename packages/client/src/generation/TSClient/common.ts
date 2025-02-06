@@ -9,6 +9,7 @@ export const commonCodeJS = ({
   browser,
   clientVersion,
   engineVersion,
+  generator,
   deno,
 }: TSClientOptions): string => `${deno ? 'const exports = {}' : ''}
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -21,7 +22,6 @@ import {
   PrismaClientRustPanicError,
   PrismaClientInitializationError,
   PrismaClientValidationError,
-  NotFoundError,
   getPrismaClient,
   sqltag,
   empty,
@@ -34,7 +34,8 @@ import {
   Extensions,
   defineDmmfProperty,
   Public,
-  getRuntime
+  getRuntime,
+  skip
 } from '${runtimeBase}/${runtimeNameJs}.js'`
     : browser
     ? `
@@ -43,7 +44,8 @@ const {
   objectEnumValues,
   makeStrictEnum,
   Public,
-  getRuntime
+  getRuntime,
+  skip
 } = require('${runtimeBase}/${runtimeNameJs}.js')
 `
     : `
@@ -53,12 +55,12 @@ const {
   PrismaClientRustPanicError,
   PrismaClientInitializationError,
   PrismaClientValidationError,
-  NotFoundError,
   getPrismaClient,
   sqltag,
   empty,
   join,
   raw,
+  skip,
   Decimal,
   Debug,
   objectEnumValues,
@@ -67,7 +69,8 @@ const {
   warnOnce,
   defineDmmfProperty,
   Public,
-  getRuntime
+  getRuntime,
+  createParam,
 } = require('${runtimeBase}/${runtimeNameJs}.js')
 `
 }
@@ -91,7 +94,6 @@ Prisma.PrismaClientUnknownRequestError = ${notSupportOnBrowser('PrismaClientUnkn
 Prisma.PrismaClientRustPanicError = ${notSupportOnBrowser('PrismaClientRustPanicError', browser)}
 Prisma.PrismaClientInitializationError = ${notSupportOnBrowser('PrismaClientInitializationError', browser)}
 Prisma.PrismaClientValidationError = ${notSupportOnBrowser('PrismaClientValidationError', browser)}
-Prisma.NotFoundError = ${notSupportOnBrowser('NotFoundError', browser)}
 Prisma.Decimal = Decimal
 
 /**
@@ -121,6 +123,8 @@ Prisma.NullTypes = {
   JsonNull: objectEnumValues.classes.JsonNull,
   AnyNull: objectEnumValues.classes.AnyNull
 }
+
+${buildPrismaSkipJs(generator.previewFeatures)}
 `
 
 export const notSupportOnBrowser = (fnc: string, browser?: boolean) => {
@@ -134,7 +138,13 @@ In case this error is unexpected for you, please report it in https://pris.ly/pr
   return fnc
 }
 
-export const commonCodeTS = ({ runtimeBase, runtimeNameTs, clientVersion, engineVersion }: TSClientOptions) => ({
+export const commonCodeTS = ({
+  runtimeBase,
+  runtimeNameTs,
+  clientVersion,
+  engineVersion,
+  generator,
+}: TSClientOptions) => ({
   tsWithoutNamespace: () => `import * as runtime from '${runtimeBase}/${runtimeNameTs}';
 import $Types = runtime.Types // general types
 import $Public = runtime.Types.Public
@@ -161,7 +171,6 @@ export import PrismaClientUnknownRequestError = runtime.PrismaClientUnknownReque
 export import PrismaClientRustPanicError = runtime.PrismaClientRustPanicError
 export import PrismaClientInitializationError = runtime.PrismaClientInitializationError
 export import PrismaClientValidationError = runtime.PrismaClientValidationError
-export import NotFoundError = runtime.NotFoundError
 
 /**
  * Re-export of sql-template-tag
@@ -172,6 +181,8 @@ export import join = runtime.join
 export import raw = runtime.raw
 export import Sql = runtime.Sql
 
+${buildPrismaSkipTs(generator.previewFeatures)}
+
 /**
  * Decimal.js
  */
@@ -180,7 +191,7 @@ export import Decimal = runtime.Decimal
 export type DecimalJsLike = runtime.DecimalJsLike
 
 /**
- * Metrics 
+ * Metrics
  */
 export type Metrics = runtime.Metrics
 export type Metric<T> = runtime.Metric<T>
@@ -205,7 +216,7 @@ export type PrismaVersion = {
   client: string
 }
 
-export const prismaVersion: PrismaVersion 
+export const prismaVersion: PrismaVersion
 
 /**
  * Utility Types
@@ -221,7 +232,7 @@ export import InputJsonValue = runtime.InputJsonValue
 
 /**
  * Types of the values used to represent different kinds of \`null\` values when working with JSON fields.
- * 
+ *
  * @see https://www.prisma.io/docs/concepts/components/prisma-client/working-with-fields/working-with-json-fields#filtering-on-a-json-field
  */
 namespace NullTypes {
@@ -234,21 +245,21 @@ ${buildNullClass('AnyNull')}
 
 /**
  * Helper for filtering JSON entries that have \`null\` on the database (empty on the db)
- * 
+ *
  * @see https://www.prisma.io/docs/concepts/components/prisma-client/working-with-fields/working-with-json-fields#filtering-on-a-json-field
  */
 export const DbNull: NullTypes.DbNull
 
 /**
  * Helper for filtering JSON entries that have JSON \`null\` values (not empty on the db)
- * 
+ *
  * @see https://www.prisma.io/docs/concepts/components/prisma-client/working-with-fields/working-with-json-fields#filtering-on-a-json-field
  */
 export const JsonNull: NullTypes.JsonNull
 
 /**
  * Helper for filtering JSON entries that are \`Prisma.DbNull\` or \`Prisma.JsonNull\`
- * 
+ *
  * @see https://www.prisma.io/docs/concepts/components/prisma-client/working-with-fields/working-with-json-fields#filtering-on-a-json-field
  */
 export const AnyNull: NullTypes.AnyNull
@@ -554,9 +565,9 @@ type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRe
 function buildNullClass(name: string) {
   const source = `/**
 * Type of \`Prisma.${name}\`.
-* 
+*
 * You cannot use other instances of this class. Please use the \`Prisma.${name}\` value.
-* 
+*
 * @see https://www.prisma.io/docs/concepts/components/prisma-client/working-with-fields/working-with-json-fields#filtering-on-a-json-field
 */
 class ${name} {
@@ -564,4 +575,27 @@ class ${name} {
   private constructor()
 }`
   return indent(source, TAB_SIZE)
+}
+
+function buildPrismaSkipTs(previewFeatures: string[]) {
+  if (previewFeatures.includes('strictUndefinedChecks')) {
+    return `
+/**
+ * Prisma.skip
+ */
+export import skip = runtime.skip
+`
+  }
+
+  return ''
+}
+
+function buildPrismaSkipJs(previewFeatures: string[]) {
+  if (previewFeatures.includes('strictUndefinedChecks')) {
+    return `
+Prisma.skip = skip
+`
+  }
+
+  return ''
 }
