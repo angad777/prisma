@@ -3,17 +3,19 @@ import { waitFor } from '../_utils/tests/waitFor'
 import { NewPrismaClient } from '../_utils/types'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './generated/prisma/client'
 
-declare let newPrismaClient: NewPrismaClient<typeof PrismaClient>
+declare const newPrismaClient: NewPrismaClient<PrismaClient, typeof PrismaClient>
 declare let Prisma: typeof PrismaNamespace
 
 testMatrix.setupTestSuite(
-  ({ provider }, _suiteMeta, _clientMeta) => {
+  ({ provider, driverAdapter, clientEngineExecutor }, _suiteMeta, _clientMeta) => {
     const isSqlServer = provider === Providers.SQLSERVER
+    const isCockroachDb = provider === Providers.COCKROACHDB
+    const usesJsDrivers = driverAdapter !== undefined || clientEngineExecutor === 'remote'
 
     const queries: string[] = []
-    let prisma: PrismaClient<PrismaNamespace.PrismaClientOptions, 'query'>
+    let prisma: PrismaClient
 
     beforeAll(() => {
       prisma = newPrismaClient({
@@ -25,7 +27,8 @@ testMatrix.setupTestSuite(
         ],
       })
 
-      prisma.$on('query', (event) => {
+      // @ts-expect-error - client not typed for log opts for cross generator compatibility - can be improved once we drop the prisma-client-js generator
+      prisma.$on('query', (event: Prisma.QueryEvent) => {
         queries.push(event.query)
       })
     })
@@ -36,9 +39,14 @@ testMatrix.setupTestSuite(
 
     const testIsolationLevel = (
       name: string,
-      { level, expectSql }: { level: () => PrismaNamespace.TransactionIsolationLevel; expectSql: string },
+      {
+        level,
+        onlyIf,
+        expectSql,
+      }: { level: () => PrismaNamespace.TransactionIsolationLevel; onlyIf?: () => boolean; expectSql: string },
     ) => {
-      test(name, async () => {
+      // Driver adapters do not issue SET TRANSACTION ISOLATION LEVEL through the query engine.
+      testIf(!usesJsDrivers && (onlyIf ? onlyIf() : true))(name, async () => {
         await prisma.$transaction([prisma.user.findFirst({}), prisma.user.findFirst({})], {
           isolationLevel: level(),
         })
@@ -50,7 +58,9 @@ testMatrix.setupTestSuite(
     }
 
     testIsolationLevel('ReadUncommitted', {
+      // @ts-test-if: !['cockroachdb'].includes(provider)
       level: () => Prisma.TransactionIsolationLevel.ReadUncommitted,
+      onlyIf: () => !isCockroachDb,
       expectSql: 'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED',
     })
 
@@ -60,7 +70,9 @@ testMatrix.setupTestSuite(
     })
 
     testIsolationLevel('RepeatableRead', {
+      // @ts-test-if: !['cockroachdb'].includes(provider)
       level: () => Prisma.TransactionIsolationLevel.RepeatableRead,
+      onlyIf: () => !isCockroachDb,
       expectSql: 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
     })
 
@@ -73,7 +85,7 @@ testMatrix.setupTestSuite(
       await prisma.$transaction([prisma.user.findFirst({}), prisma.user.findFirst({})])
 
       const match = queries.find((q) => q.includes('SET TRANSACTION ISOLATION LEVEL'))
-      if (isSqlServer) {
+      if (isSqlServer && !usesJsDrivers) {
         expect(match).toBeDefined()
       } else {
         expect(match).toBeUndefined()
@@ -101,7 +113,7 @@ testMatrix.setupTestSuite(
   },
   {
     optOut: {
-      from: ['mongodb', 'sqlite', 'cockroachdb'],
+      from: ['mongodb', 'sqlite'],
       reason: `
         mongo - Not supported
         sqlite, cockroach - Support only serializable level, never generate sql for setting isolation level

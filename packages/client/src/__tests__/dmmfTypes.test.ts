@@ -5,7 +5,6 @@ import sortKeys from 'sort-keys'
 
 const blog = `datasource db {
   provider = "postgres"
-  url      = env("MY_POSTGRES_DB")
 }
 
 model Post {
@@ -26,7 +25,7 @@ model User {
 // TODO: Port this test to the new functional test setup
 test.skip('dmmf types', async () => {
   const dmmf = await getDMMF({ datamodel: blog })
-  const file = `import { DMMF } from '@prisma/generator-helper'
+  const file = `import type * as DMMF from '@prisma/dmmf'
 
 const dmmf: DMMF.Document = ${JSON.stringify(sortKeys(dmmf, { deep: true }), null, 2)}
 `

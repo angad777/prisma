@@ -1,7 +1,6 @@
 'use strict'
-const path = require('path')
-const replaceAll = require('replace-string') // sindre's replaceAll polyfill
-const stripAnsi = require('strip-ansi')
+const path = require('node:path')
+const { stripVTControlCharacters } = require('node:util')
 const { binaryTargetRegex } = require('./binaryTargetRegex')
 
 // Pipe utility
@@ -27,18 +26,35 @@ function normalizeLogs(str) {
 }
 
 function normalizeTmpDir(str) {
-  return str.replace(/\/tmp\/([a-z0-9]+)\//g, '/tmp/dir/')
+  const tempDirRegexes = [
+    // Linux
+    /\/tmp\/([a-z0-9]+)/g,
+    // macOS
+    /\/private\/var\/folders\/[^/]+\/[^/]+\/T\/[a-z0-9]+/g,
+  ]
+
+  // Windows
+  if (process.env.TEMP) {
+    const escapedPath = process.env.TEMP.replaceAll('\\', '\\\\')
+    tempDirRegexes.push(new RegExp(`${escapedPath}\\\\[a-z0-9]+`, 'g'))
+  }
+
+  for (const regex of tempDirRegexes) {
+    str = str.replace(regex, '/tmp/dir')
+  }
+
+  return str
 }
 
 function trimErrorPaths(str) {
   const parentDir = path.dirname(path.dirname(path.dirname(__dirname)))
 
-  return replaceAll(str, parentDir, '')
+  return str.replaceAll(parentDir, '')
 }
 
 function normalizeToUnixPaths(str) {
   // TODO: Windows: this breaks some tests by replacing backslashes outside of file names.
-  return replaceAll(str, path.sep, '/')
+  return str.replaceAll(path.sep, '/')
 }
 
 function normalizeGitHubLinks(str) {
@@ -53,16 +69,6 @@ function normalizeTsClientStackTrace(str) {
 
 function removePlatforms(str) {
   return str.replace(binaryTargetRegex, 'TEST_PLATFORM')
-}
-
-// When updating snapshots this is sensitive to OS
-// macOS will update extension to .dylib.node, but CI uses .so.node for example
-// Note that on Windows the file name doesn't start with "lib".
-function normalizeNodeApiLibFilePath(str) {
-  return str.replace(
-    /((lib)?query_engine-TEST_PLATFORM\.)(.*)(\.node)/g,
-    'libquery_engine-TEST_PLATFORM.LIBRARY_TYPE.node',
-  )
 }
 
 function normalizeBinaryFilePath(str) {
@@ -136,7 +142,7 @@ module.exports = {
 
     // order is important
     return pipe(
-      stripAnsi,
+      stripVTControlCharacters,
       // integration-tests pkg
       prepareSchemaForSnapshot,
       // Generic
@@ -145,7 +151,6 @@ module.exports = {
       // From Client package
       normalizeGitHubLinks,
       removePlatforms,
-      normalizeNodeApiLibFilePath,
       normalizeBinaryFilePath,
       normalizeTsClientStackTrace,
       trimErrorPaths,

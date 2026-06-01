@@ -1,10 +1,10 @@
+import { Decimal, isObjectEnumValue, Sql } from '@prisma/client-runtime-utils'
 import { assertNever } from '@prisma/internals'
-import Decimal from 'decimal.js'
-import { Sql } from 'sql-template-tag'
 
 import { isFieldRef } from '../core/model/FieldRef'
+import { isSkip } from '../core/types'
+import { isTypedSql, TypedSql, UnknownTypedSql } from '../core/types/exported'
 import { JsArgs, JsInputValue } from '../core/types/exported/JsApi'
-import { ObjectEnumValue } from '../core/types/exported/ObjectEnums'
 import { RawQueryArgs } from '../core/types/exported/RawQueryArgs'
 import { isDate } from './date'
 import { isDecimalJsLike } from './decimalJsLike'
@@ -12,6 +12,10 @@ import { isDecimalJsLike } from './decimalJsLike'
 export function deepCloneArgs(args: JsArgs | RawQueryArgs): JsArgs | RawQueryArgs {
   if (args instanceof Sql) {
     return cloneSql(args)
+  }
+
+  if (isTypedSql(args)) {
+    return cloneTypedSql(args)
   }
 
   if (Array.isArray(args)) {
@@ -34,9 +38,13 @@ function cloneSql(rawParam: Sql): Sql {
   return new Sql(rawParam.strings, rawParam.values)
 }
 
+function cloneTypedSql(rawParam: UnknownTypedSql): UnknownTypedSql {
+  return new TypedSql(rawParam.sql, rawParam.values)
+}
+
 // based on https://github.com/lukeed/klona/blob/v2.0.6/src/index.js
 function deepCloneValue(x: JsInputValue): JsInputValue {
-  if (typeof x !== 'object' || x == null || x instanceof ObjectEnumValue || isFieldRef(x)) {
+  if (typeof x !== 'object' || x == null || isObjectEnumValue(x) || isFieldRef(x) || isSkip(x)) {
     return x
   }
 

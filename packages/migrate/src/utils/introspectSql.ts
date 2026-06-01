@@ -1,6 +1,7 @@
-import { SqlQueryOutput } from '@prisma/generator-helper'
-import { type ConfigMetaFormat, getConfig, getEffectiveUrl, getSchemaWithPath } from '@prisma/internals'
+import { GeneratorConfig, SqlQueryOutput } from '@prisma/generator'
+import type { PrismaConfigWithDatasource, SchemaContext } from '@prisma/internals'
 
+import { Migrate } from '../Migrate'
 import { SchemaEngine } from '../SchemaEngine'
 import { EngineArgs } from '../types'
 
@@ -36,33 +37,30 @@ export type IntrospectSqlResult =
     }
 
 export async function introspectSql(
-  schemaPath: string | undefined,
+  schemaContext: SchemaContext,
+  config: PrismaConfigWithDatasource,
+  baseDir: string,
   queries: IntrospectSqlInput[],
 ): Promise<IntrospectSqlResult> {
-  const schema = await getSchemaWithPath(schemaPath)
-  const config = await getConfig({ datamodel: schema.schemas })
-  if (!supportedProviders.includes(config.datasources?.[0]?.activeProvider)) {
+  if (!isTypedSqlEnabled(schemaContext.generators)) {
+    throw new Error(`\`typedSql\` preview feature needs to be enabled in ${schemaContext.loadedFromPathForLogMessages}`)
+  }
+
+  const firstDatasource = schemaContext.primaryDatasource
+  if (!firstDatasource) {
+    throw new Error(`Could not find datasource in schema ${schemaContext.loadedFromPathForLogMessages}`)
+  }
+  if (!supportedProviders.includes(firstDatasource.activeProvider)) {
     throw new Error(`Typed SQL is supported only for ${supportedProviders.join(', ')} providers`)
   }
-  if (!isTypedSqlEnabled(config)) {
-    throw new Error(`\`typedSql\` preview feature needs to be enabled in ${schema.schemaPath}`)
-  }
 
-  const firstDatasource = config.datasources[0]
-  if (!firstDatasource) {
-    throw new Error(`Could not find datasource in schema ${schema.schemaPath}`)
-  }
-  const url = getEffectiveUrl(firstDatasource).value
-  if (!url) {
-    throw new Error(`Could not get url from datasource ${firstDatasource.name} in ${schema.schemaPath}`)
-  }
-
-  const schemaEngine = new SchemaEngine({ schemaPath: schema.schemaPath })
+  const migrate = await Migrate.setup({ schemaContext, schemaEngineConfig: config, baseDir })
+  const schemaEngine = migrate.engine
   const results: SqlQueryOutput[] = []
   const errors: IntrospectSqlError[] = []
   try {
     for (const query of queries) {
-      const queryResult = await introspectSingleQuery(schemaEngine, url, query)
+      const queryResult = await introspectSingleQuery(schemaEngine, config.datasource.url, query)
       if (queryResult.ok) {
         results.push(queryResult.result)
       } else {
@@ -70,7 +68,7 @@ export async function introspectSql(
       }
     }
   } finally {
-    schemaEngine.stop()
+    await schemaEngine.stop()
   }
 
   if (errors.length > 0) {
@@ -116,6 +114,6 @@ async function introspectSingleQuery(
   }
 }
 
-function isTypedSqlEnabled(config: ConfigMetaFormat) {
-  return config.generators.some((gen) => gen?.previewFeatures?.includes('typedSql'))
+function isTypedSqlEnabled(generators: GeneratorConfig[]) {
+  return generators.some((gen) => gen?.previewFeatures?.includes('typedSql'))
 }

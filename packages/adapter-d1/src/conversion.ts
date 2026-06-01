@@ -1,6 +1,4 @@
-import { ColumnType, ColumnTypeEnum } from '@prisma/driver-adapter-utils'
-
-// const debug = Debug('prisma:driver-adapter:d1:conversion')
+import { ArgType, ColumnType, ColumnTypeEnum, ResultValue } from '@prisma/driver-adapter-utils'
 
 export type Value = null | string | number | object
 
@@ -66,7 +64,7 @@ function inferColumnType(value: NonNullable<Value>): ColumnType {
 
 // See https://stackoverflow.com/a/3143231/1345244
 const isoDateRegex = new RegExp(
-  /^(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z))|(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z))|(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z))$/,
+  /^(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z))$|^(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z))$|^(\d{4}-[01]\d-[0-3]\dT[0-2]\d:[0-5]\d([+-][0-2]\d:[0-5]\d|Z))$/,
 )
 
 // SQLITE date format, returned by built-in time functions. See https://www.sqlite.org/lang_datefunc.html
@@ -104,12 +102,12 @@ class UnexpectedTypeError extends Error {
   }
 }
 
-export function mapRow(result: unknown[], columnTypes: ColumnType[]): unknown[] {
+export function mapRow<A>(result: (A | ResultValue)[], columnTypes: ColumnType[]): (A | ResultValue)[] {
   for (let i = 0; i < result.length; i++) {
     const value = result[i]
 
     if (value instanceof ArrayBuffer) {
-      result[i] = Array.from(new Uint8Array(value))
+      result[i] = new Uint8Array(value)
       continue
     }
 
@@ -138,4 +136,62 @@ export function mapRow(result: unknown[], columnTypes: ColumnType[]): unknown[] 
   }
 
   return result
+}
+
+// Sanitize the query arguments before sending them to the database.
+export function mapArg<A>(arg: A | Date, argType: ArgType): null | number | string | number[] | A {
+  if (arg === null) {
+    return null
+  }
+
+  if (typeof arg === 'bigint' || argType.scalarType === 'bigint') {
+    const asInt56 = Number.parseInt(`${arg}`)
+    if (!Number.isSafeInteger(asInt56)) {
+      throw new Error(`Invalid Int64-encoded value received: ${arg}`)
+    }
+
+    return asInt56
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'int') {
+    return Number.parseInt(arg)
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'float') {
+    return Number.parseFloat(arg)
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'decimal') {
+    // This can lose precision, but SQLite does not have a native decimal type.
+    // This is how we have historically handled it.
+    return Number.parseFloat(arg)
+  }
+
+  // * Hack for booleans, we must convert them to 0/1.
+  // * ✘ [ERROR] Error in performIO: Error: D1_TYPE_ERROR: Type 'boolean' not supported for value 'true'
+  if (arg === true) {
+    return 1
+  }
+
+  if (arg === false) {
+    return 0
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'datetime') {
+    arg = new Date(arg)
+  }
+
+  if (arg instanceof Date) {
+    return arg.toISOString().replace('Z', '+00:00')
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'bytes') {
+    return Array.from(Buffer.from(arg, 'base64'))
+  }
+
+  if (arg instanceof Uint8Array) {
+    return Array.from(arg)
+  }
+
+  return arg
 }

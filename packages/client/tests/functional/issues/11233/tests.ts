@@ -1,14 +1,18 @@
 import { AdapterProviders, Providers } from '../../_utils/providers'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 declare let Prisma: typeof PrismaNamespace
 
 // https://github.com/prisma/prisma/issues/11233
 testMatrix.setupTestSuite(
-  ({ provider, driverAdapter }) => {
+  ({ provider, driverAdapter, clientEngineExecutor }) => {
+    const usesMariadbDriver =
+      driverAdapter === AdapterProviders.JS_MARIADB ||
+      (clientEngineExecutor === 'remote' && provider === Providers.MYSQL)
+
     test('should not throw when using Prisma.empty inside $executeRaw', async () => {
       expect.assertions(1)
 
@@ -27,6 +31,8 @@ testMatrix.setupTestSuite(
             expect((result as Error).message).toContain(': not an error')
           } else if (driverAdapter === AdapterProviders.JS_D1) {
             expect((result as Error).message).toContain('D1_ERROR: No SQL statements detected.')
+          } else if (driverAdapter === AdapterProviders.JS_BETTER_SQLITE3) {
+            expect((result as Error).message).toContain('The supplied SQL string contains no statements')
           } else {
             expect((result as Error).message).toContain('Raw query failed. Code: `21`. Message: `not an error`')
           }
@@ -38,7 +44,11 @@ testMatrix.setupTestSuite(
           break
 
         case Providers.MYSQL:
-          expect((result as Error).message).toContain('Raw query failed. Code: `1065`. Message: `Query was empty`')
+          if (usesMariadbDriver) {
+            expect((result as Error).message).toContain('sql parameter is mandatory')
+          } else {
+            expect((result as Error).message).toContain('Query was empty')
+          }
           break
 
         default:
@@ -64,6 +74,8 @@ testMatrix.setupTestSuite(
             expect((result as Error).message).toContain(': not an error')
           } else if (driverAdapter === AdapterProviders.JS_D1) {
             expect((result as Error).message).toContain('D1_ERROR: No SQL statements detected.')
+          } else if (driverAdapter === AdapterProviders.JS_BETTER_SQLITE3) {
+            expect((result as Error).message).toContain('The supplied SQL string contains no statements')
           } else {
             expect((result as Error).message).toContain('Raw query failed. Code: `21`. Message: `not an error`')
           }
@@ -75,7 +87,11 @@ testMatrix.setupTestSuite(
           break
 
         case Providers.MYSQL:
-          expect((result as Error).message).toContain('Raw query failed. Code: `1065`. Message: `Query was empty`')
+          if (usesMariadbDriver) {
+            expect((result as Error).message).toContain('sql parameter is mandatory')
+          } else {
+            expect((result as Error).message).toContain('Query was empty')
+          }
           break
 
         default:

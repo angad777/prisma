@@ -1,12 +1,12 @@
+import { stripVTControlCharacters } from 'node:util'
+
 import { getDMMF } from '@prisma/internals'
-import stripAnsi from 'strip-ansi'
 
 describe('dmmf', () => {
   test('dmmf enum filter mysql', async () => {
     const datamodel = `
       datasource db {
         provider = "mysql"
-        url      = env("MY_MYSQL_DB")
       }
       
       model User {
@@ -46,6 +46,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "equals",
           },
@@ -59,6 +60,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "in",
           },
@@ -72,6 +74,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "notIn",
           },
@@ -91,6 +94,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "not",
           },
@@ -121,6 +125,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "equals",
           },
@@ -134,6 +139,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "in",
           },
@@ -147,6 +153,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "notIn",
           },
@@ -166,6 +173,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "not",
           },
@@ -179,7 +187,6 @@ describe('dmmf', () => {
     const datamodel = `
       datasource db {
         provider = "postgresql"
-        url      = env("MY_POSTGRES_DB")
       }
       
       model User {
@@ -219,6 +226,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "equals",
           },
@@ -238,6 +246,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "in",
           },
@@ -257,6 +266,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "notIn",
           },
@@ -276,6 +286,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "not",
           },
@@ -306,6 +317,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "equals",
           },
@@ -325,6 +337,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "in",
           },
@@ -344,6 +357,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "notIn",
           },
@@ -363,6 +377,7 @@ describe('dmmf', () => {
               },
             ],
             "isNullable": false,
+            "isParameterizable": true,
             "isRequired": false,
             "name": "not",
           },
@@ -376,7 +391,6 @@ describe('dmmf', () => {
     const datamodel = `
       datasource db {
         provider = "sqlite"
-        url      = "file:./dev.db"
       }
 
       model User {
@@ -394,7 +408,7 @@ describe('dmmf', () => {
     try {
       await getDMMF({ datamodel })
     } catch (e) {
-      expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
+      expect(stripVTControlCharacters(e.message)).toMatchInlineSnapshot(`
         "Prisma schema validation - (get-dmmf wasm)
         Error code: P1012
         error: Error validating: You defined the enum \`PostKind\`. But the current connector does not support enums.

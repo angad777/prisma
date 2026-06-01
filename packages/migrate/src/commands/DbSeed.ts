@@ -1,8 +1,9 @@
-import { arg, Command, format, getSchemaWithPath, HelpError, isError, loadEnvFile } from '@prisma/internals'
+import type { PrismaConfigInternal } from '@prisma/config'
+import { arg, Command, format, HelpError, isError } from '@prisma/internals'
 import { ArgError } from 'arg'
 import { bold, dim, red } from 'kleur/colors'
 
-import { executeSeedCommand, getSeedCommandFromPackageJson, verifySeedConfigAndReturnMessage } from '../utils/seed'
+import { executeSeedCommand } from '../utils/seed'
 
 export class DbSeed implements Command {
   public static new(): DbSeed {
@@ -19,6 +20,7 @@ ${bold('Usage')}
 ${bold('Options')}
 
   -h, --help   Display this help message
+    --config   Custom path to your Prisma config file
 
 ${bold('Examples')}
 
@@ -26,13 +28,14 @@ ${bold('Examples')}
     ${dim('$')} prisma db seed -- --arg1 value1 --arg2 value2
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal): Promise<string | Error> {
     const args = arg(
       argv,
       {
         '--help': Boolean,
         '-h': '--help',
         '--schema': String,
+        '--config': String,
         '--telemetry-information': String,
       },
       false,
@@ -51,21 +54,25 @@ ${dim('$')} prisma db seed -- --arg1 value1 --arg2 value2`)
       return this.help()
     }
 
-    await loadEnvFile({ schemaPath: args['--schema'], printMessage: true })
+    const seedCommand = config.migrations?.seed
 
-    const seedCommandFromPkgJson = await getSeedCommandFromPackageJson(process.cwd())
+    if (!seedCommand) {
+      return format(`⚠️ ${bold('No seed command configured')}
 
-    if (!seedCommandFromPkgJson) {
-      // Only used to help users to set up their seeds from old way to new package.json config
-      const schemaResult = await getSchemaWithPath(args['--schema'])
+To seed your database, add a ${bold('seed')} property to the ${bold('migrations')} section in your ${bold('Prisma config')} file.
 
-      const message = await verifySeedConfigAndReturnMessage(schemaResult?.schemaPath ?? null)
-      // Error because setup of the feature needs to be done
-      if (message) {
-        throw new Error(message)
-      }
+${bold('Example')}
 
-      return ``
+  ${dim('// prisma.config.ts')}
+  export default defineConfig({
+    ${bold('migrations: {')}
+      ${bold(`seed: 'bun·./prisma/seed.ts'`)},
+    ${bold('}')},
+    ${dim('datasource: {')}
+      ${dim(`url: '[your database URL]'`)},
+    ${dim('}')},
+  })
+`)
     }
 
     // We pass the extra params after a -- separator
@@ -75,7 +82,7 @@ ${dim('$')} prisma db seed -- --arg1 value1 --arg2 value2`)
 
     // Seed command is set
     // Execute user seed command
-    const successfulSeeding = await executeSeedCommand({ commandFromConfig: seedCommandFromPkgJson, extraArgs })
+    const successfulSeeding = await executeSeedCommand({ commandFromConfig: seedCommand, extraArgs })
     if (successfulSeeding) {
       return `\n${process.platform === 'win32' ? '' : '🌱  '}The seed command has been executed.`
     } else {

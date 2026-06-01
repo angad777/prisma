@@ -1,10 +1,11 @@
-import { Writer } from '../../../generation/ts-builders/Writer'
-import { lowerCase } from '../../../generation/utils/common'
+import { uncapitalize } from '@prisma/client-common'
+import { isObjectEnumValue } from '@prisma/client-runtime-utils'
+import { Writer } from '@prisma/ts-builders'
+
 import { ErrorFormat } from '../../getPrismaClient'
 import { isValidDate } from '../../utils/date'
 import { isDecimalJsLike } from '../../utils/decimalJsLike'
 import { isFieldRef } from '../model/FieldRef'
-import { ObjectEnumValue } from '../types/exported/ObjectEnums'
 import { ArrayValue } from './ArrayValue'
 import { activeColors, Colors, ErrorBasicBuilder, ErrorWriter, inactiveColors } from './base'
 import { ObjectField } from './ObjectField'
@@ -94,12 +95,12 @@ function buildInputValue(value: unknown) {
     return new ScalarValue(`new Date("${dateStr}")`)
   }
 
-  if (value instanceof ObjectEnumValue) {
+  if (isObjectEnumValue(value)) {
     return new ScalarValue(`Prisma.${value._getName()}`)
   }
 
   if (isFieldRef(value)) {
-    return new ScalarValue(`prisma.${lowerCase(value.modelName)}.$fields.${value.name}`)
+    return new ScalarValue(`prisma.${uncapitalize(value.modelName)}.$fields.${value.name}`)
   }
 
   if (Array.isArray(value)) {

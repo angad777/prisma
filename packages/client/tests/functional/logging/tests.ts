@@ -4,15 +4,21 @@ import { Providers } from '../_utils/providers'
 import { NewPrismaClient } from '../_utils/types'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma, PrismaClient } from './generated/prisma/client'
 
-declare let newPrismaClient: NewPrismaClient<typeof PrismaClient>
+// @only-ts-generator
+type LogPrismaClient = PrismaClient<'query'>
+// @only-js-generator
+type LogPrismaClient = PrismaClient<{ log: [{ emit: 'event'; level: 'query' }] }>
 
-testMatrix.setupTestSuite(({ provider, driverAdapter }) => {
+declare const newPrismaClient: NewPrismaClient<LogPrismaClient, typeof PrismaClient>
+
+testMatrix.setupTestSuite(({ provider, driverAdapter, clientEngineExecutor }) => {
   const isMongoDb = provider === Providers.MONGODB
   const isSqlServer = provider === Providers.SQLSERVER
+  const usesJsDrivers = driverAdapter !== undefined || clientEngineExecutor === 'remote'
 
-  let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>
+  let client: LogPrismaClient
 
   test('should log queries on a method call', async () => {
     client = newPrismaClient({
@@ -106,18 +112,21 @@ testMatrix.setupTestSuite(({ provider, driverAdapter }) => {
       //   we skip a read when possible, on CockroachDB and PostgreSQL.
       // - Since https://github.com/prisma/prisma-engines/pull/4640,
       //   we also skip a read when possible, on SQLite.
-      if (['postgresql', 'cockroachdb', 'sqlite'].includes(provider)) {
-        expect(logs).toHaveLength(4)
-        expect(logs[0].query).toContain('BEGIN')
-        expect(logs[1].query).toContain('INSERT')
-        expect(logs[2].query).toContain('SELECT')
-        expect(logs[3].query).toContain('COMMIT')
-      } else {
-        expect(logs).toHaveLength(isSqlServer ? 6 : 5)
-        if (isSqlServer) {
-          expect(logs.shift()?.query).toContain('SET TRANSACTION')
-        }
+
+      if (isSqlServer && !usesJsDrivers) {
+        expect(logs.shift()?.query).toContain('SET TRANSACTION')
+      }
+      if (!usesJsDrivers) {
+        // Driver adapters do not issue BEGIN through the query engine.
         expect(logs.shift()?.query).toContain('BEGIN')
+      }
+      if (['postgresql', 'cockroachdb', 'sqlite'].includes(provider)) {
+        expect(logs).toHaveLength(3)
+        expect(logs.shift()?.query).toContain('INSERT')
+        expect(logs.shift()?.query).toContain('SELECT')
+        expect(logs.shift()?.query).toContain('COMMIT')
+      } else {
+        expect(logs).toHaveLength(4)
         expect(logs.shift()?.query).toContain('INSERT')
         expect(logs.shift()?.query).toContain('SELECT')
         expect(logs.shift()?.query).toContain('SELECT')
@@ -180,11 +189,14 @@ testMatrix.setupTestSuite(({ provider, driverAdapter }) => {
       expect(logs[0].query).toContain('User.aggregate')
       expect(logs[0].query).toContain('User.aggregate')
     } else {
-      expect(logs).toHaveLength(isSqlServer ? 5 : 4)
-      if (isSqlServer) {
+      if (isSqlServer && !usesJsDrivers) {
         expect(logs.shift()?.query).toContain('SET TRANSACTION')
       }
-      expect(logs.shift()?.query).toContain('BEGIN')
+      if (!usesJsDrivers) {
+        // Driver adapters do not issue BEGIN through the query engine.
+        expect(logs.shift()?.query).toContain('BEGIN')
+      }
+      expect(logs).toHaveLength(3)
       expect(logs.shift()?.query).toContain('SELECT')
       expect(logs.shift()?.query).toContain('SELECT')
       expect(logs.shift()?.query).toContain('COMMIT')
@@ -243,11 +255,14 @@ testMatrix.setupTestSuite(({ provider, driverAdapter }) => {
       expect(logs[0].query).toContain('User.aggregate')
       expect(logs[0].query).toContain('User.aggregate')
     } else {
-      expect(logs).toHaveLength(isSqlServer ? 5 : 4)
-      if (isSqlServer) {
+      if (isSqlServer && !usesJsDrivers) {
         expect(logs.shift()?.query).toContain('SET TRANSACTION')
       }
-      expect(logs.shift()?.query).toContain('BEGIN')
+      if (!usesJsDrivers) {
+        // Driver adapters do not issue BEGIN through the query engine.
+        expect(logs.shift()?.query).toContain('BEGIN')
+      }
+      expect(logs).toHaveLength(3)
       expect(logs.shift()?.query).toContain('SELECT')
       expect(logs.shift()?.query).toContain('SELECT')
       expect(logs.shift()?.query).toContain('COMMIT')

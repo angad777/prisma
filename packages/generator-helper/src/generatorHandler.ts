@@ -1,14 +1,22 @@
-import byline from './byline'
-import type { GeneratorConfig, GeneratorManifest, GeneratorOptions, JsonRPC } from './types'
+import readline from 'node:readline'
+
+import type { GeneratorConfig, GeneratorManifest, GeneratorOptions } from '@prisma/generator'
+
+import * as JsonRpc from './json-rpc'
 
 export interface Handler {
   onGenerate(options: GeneratorOptions): Promise<any>
-  onManifest?(config: GeneratorConfig): GeneratorManifest
+  onManifest?(config: GeneratorConfig): GeneratorManifest | Promise<GeneratorManifest>
 }
 
 export function generatorHandler(handler: Handler): void {
-  byline(process.stdin).on('data', async (line) => {
-    const json = JSON.parse(String(line))
+  const stdinInterface = readline.createInterface({
+    input: process.stdin,
+    crlfDelay: Infinity,
+  })
+
+  stdinInterface.on('line', async (line: string) => {
+    const json = JSON.parse(line)
 
     if (json.method === 'generate' && json.params) {
       try {
@@ -37,7 +45,7 @@ export function generatorHandler(handler: Handler): void {
     if (json.method === 'getManifest') {
       if (handler.onManifest) {
         try {
-          const manifest = handler.onManifest(json.params)
+          const manifest = await handler.onManifest(json.params)
           respond({
             jsonrpc: '2.0',
             result: {
@@ -74,6 +82,6 @@ export function generatorHandler(handler: Handler): void {
   process.stdin.resume()
 }
 
-function respond(response: JsonRPC.Response): void {
-  console.error(JSON.stringify(response))
+function respond(response: JsonRpc.Response): void {
+  process.stderr.write(JSON.stringify(response) + '\n')
 }

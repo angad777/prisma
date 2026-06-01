@@ -1,12 +1,11 @@
-import Debug from '@prisma/debug'
-import { BinaryTarget, getNodeAPIName } from '@prisma/get-platform'
-import findCacheDir from 'find-cache-dir'
-import fs from 'fs'
-import { ensureDir } from 'fs-extra'
-import os from 'os'
-import path from 'path'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-import { BinaryType } from './BinaryType'
+import Debug from '@prisma/debug'
+import { BinaryTarget } from '@prisma/get-platform'
+import findCacheDir from 'find-cache-dir'
+import { ensureDir } from 'fs-extra'
 
 const debug = Debug('prisma:fetch-engine:cache-dir')
 
@@ -29,7 +28,9 @@ export async function getRootCacheDir(): Promise<string | null> {
       return null
     }
   }
-  return path.join(os.homedir(), '.cache/prisma')
+  return process.env.XDG_CACHE_HOME
+    ? path.join(process.env.XDG_CACHE_HOME, 'prisma')
+    : path.join(os.homedir(), '.cache/prisma')
 }
 
 export async function getCacheDir(channel: string, version: string, binaryTarget: string): Promise<string | null> {
@@ -68,15 +69,7 @@ export function getDownloadUrl({
     process.env.PRISMA_ENGINES_MIRROR ||
     'https://binaries.prisma.sh'
 
-  const finalExtension =
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-    binaryTarget === 'windows' && BinaryType.QueryEngineLibrary !== binaryName ? `.exe${extension}` : extension
-
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-  if (binaryName === BinaryType.QueryEngineLibrary) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-    binaryName = getNodeAPIName(binaryTarget, 'url')
-  }
+  const finalExtension = binaryTarget === 'windows' ? `.exe${extension}` : extension
 
   return `${baseUrl}/${channel}/${version}/${binaryTarget}/${binaryName}${finalExtension}`
 }
@@ -90,7 +83,7 @@ export async function overwriteFile(sourcePath: string, targetPath: string) {
     await removeFileIfExists(targetPath)
     await fs.promises.copyFile(sourcePath, targetPath)
   } else {
-    let tempPath = `${targetPath}.tmp${process.pid}`
+    const tempPath = `${targetPath}.tmp${process.pid}`
     await fs.promises.copyFile(sourcePath, tempPath)
     await fs.promises.rename(tempPath, targetPath)
   }

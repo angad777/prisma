@@ -1,21 +1,38 @@
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
+
 import { isCi } from '../isCi'
 
 const originalEnv = { ...process.env }
 const originalStdinisTTY = process.stdin.isTTY
 
+function restoreEnv() {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in originalEnv)) {
+      delete process.env[key]
+    }
+  }
+
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+}
+
 describe('isCi', () => {
   beforeEach(() => {
-    process.env = originalEnv
+    restoreEnv()
     process.stdin.isTTY = originalStdinisTTY
   })
   afterAll(() => {
-    process.env = originalEnv
+    restoreEnv()
     process.stdin.isTTY = originalStdinisTTY
   })
 
   describe('in non TTY environment', () => {
     beforeEach(() => {
-      delete process.env.BUILDKITE
       delete process.env.GITHUB_ACTIONS
       delete process.env.CI
       process.stdin.isTTY = false
@@ -28,7 +45,6 @@ describe('isCi', () => {
 
   describe('in TTY environment', () => {
     beforeEach(() => {
-      delete process.env.BUILDKITE
       delete process.env.GITHUB_ACTIONS
       delete process.env.CI
       process.stdin.isTTY = true

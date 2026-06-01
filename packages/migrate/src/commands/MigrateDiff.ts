@@ -1,15 +1,16 @@
+import type { PrismaConfigInternal } from '@prisma/config'
 import Debug from '@prisma/debug'
 import {
   arg,
-  checkUnsupportedDataProxy,
   Command,
+  createSchemaPathInput,
   format,
-  getConfig,
+  getSchemaWithPath,
   HelpError,
   isError,
   link,
-  loadEnvFile,
-  locateLocalCloudflareD1,
+  loadSchemaContext,
+  MigrateTypes,
   toSchemasContainer,
   toSchemasWithConfigDir,
 } from '@prisma/internals'
@@ -17,10 +18,10 @@ import fs from 'fs-jetpack'
 import { bold, dim, green, italic } from 'kleur/colors'
 import path from 'path'
 
-import { getSchemaWithPath } from '../../../internals/src/cli/getSchema'
 import { Migrate } from '../Migrate'
 import type { EngineArgs, EngineResults } from '../types'
 import { CaptureStdout } from '../utils/captureStdout'
+import { listMigrations } from '../utils/listMigrations'
 
 const debug = Debug('prisma:migrate:diff')
 
@@ -32,29 +33,21 @@ const helpOptions = format(
 ${bold('Options')}
 
   -h, --help               Display this help message
+  --config                 Custom path to your Prisma config file
   -o, --output             Writes to a file instead of stdout
 
 ${italic('From and To inputs (1 `--from-...` and 1 `--to-...` must be provided):')}
-  --from-url               A datasource URL
-  --to-url
-
   --from-empty             Flag to assume from or to is an empty datamodel
   --to-empty
 
-  --from-schema-datamodel  Path to a Prisma schema file, uses the ${italic('datamodel')} for the diff
-  --to-schema-datamodel
-
-  --from-schema-datasource Path to a Prisma schema file, uses the ${italic('datasource url')} for the diff
-  --to-schema-datasource
+  --from-schema            Path to a Prisma schema file, uses the ${italic('datamodel')} for the diff
+  --to-schema
 
   --from-migrations        Path to the Prisma Migrate migrations directory
   --to-migrations
 
-  --from-local-d1          Automatically locate the local Cloudflare D1 database
-  --to-local-d1
-
-${italic('Shadow database (only required if using --from-migrations or --to-migrations):')}
-  --shadow-database-url    URL for the shadow database
+  --from-config-datasource Flag to use the datasource from the Prisma config file
+  --to-config-datasource
 
 ${bold('Flags')}
 
@@ -79,7 +72,7 @@ The command takes a source ${green(`--from-...`)} and a destination ${green(`--t
 The source and destination must use the same provider,
 e.g. a diff using 2 different providers like PostgreSQL and SQLite is not supported.
 
-It compares the source with the destination to generate a diff. 
+It compares the source with the destination to generate a diff.
 The diff can be interpreted as generating a migration that brings the source schema (from) to the shape of the destination schema (to).
 The default output is a human readable diff, it can be rendered as SQL using \`--script\` on SQL databases.
 
@@ -87,47 +80,26 @@ See the documentation for more information ${link('https://pris.ly/d/migrate-dif
 
 ${helpOptions}
 ${bold('Examples')}
- 
-  From database to database as summary
-    e.g. compare two live databases
-  ${dim('$')} prisma migrate diff \\
-    --from-url "$DATABASE_URL" \\
-    --to-url "postgresql://login:password@localhost:5432/db2"
-  
-  From a live database to a Prisma datamodel
+
+  From the configured database to a Prisma datamodel
     e.g. roll forward after a migration failed in the middle
   ${dim('$')} prisma migrate diff \\
-    --shadow-database-url "$SHADOW_DB" \\
-    --from-url "$PROD_DB" \\
-    --to-schema-datamodel=next_datamodel.prisma \\
-    --script
-  
-  From a live database to a datamodel 
-    e.g. roll backward after a migration failed in the middle
-  ${dim('$')} prisma migrate diff \\
-    --shadow-database-url "$SHADOW_DB" \\
-    --from-url "$PROD_DB" \\
-    --to-schema-datamodel=previous_datamodel.prisma \\
+    --from-config-datasource \\
+    --to-schema=next_datamodel.prisma \\
     --script
 
-  From a local D1 database to a datamodel
+  From a Prisma datamodel to the configured database
+    e.g. roll forward after a migration failed in the middle
   ${dim('$')} prisma migrate diff \\
-    --from-local-d1 \\
-    --to-schema-datamodel=./prisma/schema.prisma \\
+    --from-schema=next_datamodel.prisma \\
+    --to-config-datasource \\
     --script
 
-  From a Prisma datamodel to a local D1 database
-  ${dim('$')} prisma migrate diff \\
-    --from-schema-datamodel=./prisma/schema.prisma \\
-    --to-local-d1 \\
-    --script
-  
-  From a Prisma Migrate \`migrations\` directory to another database
+  From a Prisma Migrate \`migrations\` directory to the configured database
     e.g. generate a migration for a hotfix already applied on production
   ${dim('$')} prisma migrate diff \\
-    --shadow-database-url "$SHADOW_DB" \\
     --from-migrations ./migrations \\
-    --to-url "$PROD_DB" \\
+    --to-config-datasource \\
     --script
 
   Execute the --script output with \`prisma db execute\` using bash pipe \`|\`
@@ -143,7 +115,7 @@ ${bold('Examples')}
     --to-[...]
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal, baseDir: string): Promise<string | Error> {
     const args = arg(
       argv,
       {
@@ -153,23 +125,28 @@ ${bold('Examples')}
         '-o': '--output',
         // From
         '--from-empty': Boolean,
-        '--from-schema-datasource': String,
-        '--from-schema-datamodel': String,
-        '--from-url': String,
+        '--from-config-datasource': Boolean,
+        '--from-schema': String,
         '--from-migrations': String,
-        '--from-local-d1': Boolean,
         // To
         '--to-empty': Boolean,
-        '--to-schema-datasource': String,
-        '--to-schema-datamodel': String,
-        '--to-url': String,
+        '--to-config-datasource': Boolean,
+        '--to-schema': String,
         '--to-migrations': String,
-        '--to-local-d1': Boolean,
         // Others
-        '--shadow-database-url': String,
         '--script': Boolean,
         '--exit-code': Boolean,
         '--telemetry-information': String,
+        '--config': String,
+        // Removed, but parsed to show help error
+        '--from-url': String,
+        '--to-url': String,
+        '--from-schema-datasource': String,
+        '--to-schema-datasource': String,
+        '--from-schema-datamodel': String,
+        '--to-schema-datamodel': String,
+        '--from-local-d1': Boolean,
+        '--to-local-d1': Boolean,
       },
       false,
     )
@@ -178,27 +155,28 @@ ${bold('Examples')}
       return this.help(args.message)
     }
 
-    await checkUnsupportedDataProxy('migrate diff', args, false)
-
     if (args['--help']) {
       return this.help()
     }
 
+    const removedTargetParameterHint = Object.keys(args)
+      .map(getRemovedTargetParameterHint)
+      .find((msg) => msg !== undefined)
+    if (removedTargetParameterHint) {
+      return this.help(removedTargetParameterHint)
+    }
+
     const numberOfFromParameterProvided =
       Number(Boolean(args['--from-empty'])) +
-      Number(Boolean(args['--from-schema-datasource'])) +
-      Number(Boolean(args['--from-schema-datamodel'])) +
-      Number(Boolean(args['--from-url'])) +
-      Number(Boolean(args['--from-migrations'])) +
-      Number(Boolean(args['--from-local-d1']))
+      Number(Boolean(args['--from-config-datasource'])) +
+      Number(Boolean(args['--from-schema'])) +
+      Number(Boolean(args['--from-migrations']))
 
     const numberOfToParameterProvided =
       Number(Boolean(args['--to-empty'])) +
-      Number(Boolean(args['--to-schema-datasource'])) +
-      Number(Boolean(args['--to-schema-datamodel'])) +
-      Number(Boolean(args['--to-url'])) +
-      Number(Boolean(args['--to-migrations'])) +
-      Number(Boolean(args['--to-local-d1']))
+      Number(Boolean(args['--to-config-datasource'])) +
+      Number(Boolean(args['--to-schema'])) +
+      Number(Boolean(args['--to-migrations']))
 
     // One of --to or --from is required
     if (numberOfFromParameterProvided !== 1 || numberOfToParameterProvided !== 1) {
@@ -212,52 +190,37 @@ ${bold('Examples')}
       return this.help(`${errorMessages.join('\n')}`)
     }
 
-    // Validate Cloudflare D1-related flags
-    if (args['--shadow-database-url'] && (args['--from-local-d1'] || args['--to-local-d1'])) {
-      return this.help(
-        `The flag \`--shadow-database-url\` is not compatible with \`--from-local-d1\` or \`--to-local-d1\`.`,
-      )
-    }
-
     let from: EngineArgs.MigrateDiffTarget
     if (args['--from-empty']) {
       from = {
         tag: 'empty',
       }
-    } else if (args['--from-schema-datasource']) {
-      // Load .env file that might be needed
-      await loadEnvFile({ schemaPath: args['--from-schema-datasource'], printMessage: false })
-      const schema = await getSchemaWithPath(path.resolve(args['--from-schema-datasource']), {
-        argumentName: '--from-schema-datasource',
-      })
-      const config = await getConfig({ datamodel: schema.schemas })
-      from = {
-        tag: 'schemaDatasource',
-        ...toSchemasWithConfigDir(schema, config),
-      }
-    } else if (args['--from-schema-datamodel']) {
-      const schema = await getSchemaWithPath(path.resolve(args['--from-schema-datamodel']), {
-        argumentName: '--from-schema-datamodel',
+    } else if (args['--from-schema']) {
+      const schema = await getSchemaWithPath({
+        schemaPath: createSchemaPathInput({
+          schemaPathFromArgs: path.resolve(args['--from-schema']),
+          schemaPathFromConfig: config.schema,
+          baseDir,
+        }),
+        argumentName: '--from-schema',
       })
       from = {
         tag: 'schemaDatamodel',
         ...toSchemasContainer(schema.schemas),
       }
-    } else if (args['--from-url']) {
-      from = {
-        tag: 'url',
-        url: args['--from-url'],
-      }
     } else if (args['--from-migrations']) {
       from = {
         tag: 'migrations',
-        path: path.resolve(args['--from-migrations']),
+        ...(await listMigrations(args['--from-migrations'], config.migrations?.initShadowDb ?? '')),
       }
-    } else if (args['--from-local-d1']) {
-      const d1Database = await locateLocalCloudflareD1({ arg: '--from-local-d1' })
+    } else if (args['--from-config-datasource']) {
+      const schemaContext = await loadSchemaContext({
+        schemaPath: createSchemaPathInput({ schemaPathFromConfig: config.schema, baseDir }),
+        printLoadMessage: false,
+      })
       from = {
-        tag: 'url',
-        url: `file:${d1Database}`,
+        tag: 'schemaDatasource',
+        ...toSchemasWithConfigDir(schemaContext, baseDir),
       }
     }
 
@@ -266,44 +229,45 @@ ${bold('Examples')}
       to = {
         tag: 'empty',
       }
-    } else if (args['--to-schema-datasource']) {
-      // Load .env file that might be needed
-      await loadEnvFile({ schemaPath: args['--to-schema-datasource'], printMessage: false })
-      const schema = await getSchemaWithPath(path.resolve(args['--to-schema-datasource']), {
-        argumentName: '--to-schema-datasource',
-      })
-      const config = await getConfig({ datamodel: schema.schemas })
-      to = {
-        tag: 'schemaDatasource',
-        ...toSchemasWithConfigDir(schema, config),
-      }
-    } else if (args['--to-schema-datamodel']) {
-      const schema = await getSchemaWithPath(path.resolve(args['--to-schema-datamodel']), {
-        argumentName: '--to-schema-datamodel',
+    } else if (args['--to-schema']) {
+      const schema = await getSchemaWithPath({
+        schemaPath: createSchemaPathInput({
+          schemaPathFromArgs: path.resolve(args['--to-schema']),
+          schemaPathFromConfig: config.schema,
+          baseDir,
+        }),
+        argumentName: '--to-schema',
       })
       to = {
         tag: 'schemaDatamodel',
         ...toSchemasContainer(schema.schemas),
       }
-    } else if (args['--to-url']) {
-      to = {
-        tag: 'url',
-        url: args['--to-url'],
-      }
     } else if (args['--to-migrations']) {
       to = {
         tag: 'migrations',
-        path: path.resolve(args['--to-migrations']),
+        ...(await listMigrations(args['--to-migrations'], config.migrations?.initShadowDb ?? '')),
       }
-    } else if (args['--to-local-d1']) {
-      const d1Database = await locateLocalCloudflareD1({ arg: '--to-local-d1' })
+    } else if (args['--to-config-datasource']) {
+      const schemaContext = await loadSchemaContext({
+        schemaPath: createSchemaPathInput({ schemaPathFromConfig: config.schema, baseDir }),
+        printLoadMessage: false,
+      })
       to = {
-        tag: 'url',
-        url: `file:${d1Database}`,
+        tag: 'schemaDatasource',
+        ...toSchemasWithConfigDir(schemaContext, baseDir),
       }
     }
 
-    const migrate = new Migrate()
+    const schemaFilter: MigrateTypes.SchemaFilter = {
+      externalTables: config.tables?.external ?? [],
+      externalEnums: config.enums?.external ?? [],
+    }
+    const migrate = await Migrate.setup({
+      schemaEngineConfig: config,
+      baseDir,
+      schemaFilter,
+      extensions: config['extensions'],
+    })
 
     // Capture stdout if --output is defined
     const captureStdout = new CaptureStdout()
@@ -319,12 +283,15 @@ ${bold('Examples')}
         from: from!,
         to: to!,
         script: args['--script'] || false, // default is false
-        shadowDatabaseUrl: args['--shadow-database-url'],
-        exitCode: args['--exit-code'],
+        exitCode: args['--exit-code'] ?? null,
+        filters: {
+          externalTables: config.tables?.external ?? [],
+          externalEnums: config.enums?.external ?? [],
+        },
       })
     } finally {
       // Stop engine
-      migrate.stop()
+      await migrate.stop()
     }
 
     // Write output to file if --output is defined
@@ -353,5 +320,32 @@ ${bold('Examples')}
       throw new HelpError(`\n${error}\n\n${helpOptions}`)
     }
     return MigrateDiff.help
+  }
+}
+
+export function getRemovedTargetParameterHint(parameter: string): string | undefined {
+  switch (parameter) {
+    case '--from-url':
+    case '--to-url':
+    case '--from-schema-datasource':
+    case '--to-schema-datasource':
+      return (
+        `\`${parameter}\` was removed. Please use \`--[from/to]-config-datasource\` in ` +
+        `combination with a Prisma config file that contains the appropriate datasource instead.`
+      )
+    case '--from-schema-datamodel':
+    case '--to-schema-datamodel':
+      return `\`${parameter}\` was removed. Please use \`--[from/to]-schema\` instead.`
+    case '--from-local-d1':
+    case '--to-local-d1':
+      return (
+        `\`${parameter}\` was removed. Please use \`--[from/to]-config-datasource\` in ` +
+        `combination with a Prisma config file that contains the appropriate datasource instead. ` +
+        `The \`@prisma/adapter-d1\` package exposes a \`listLocalDatabases()\` helper function ` +
+        `to help you locate your local D1 databases. You can use the paths returned from that ` +
+        `function to construct your datasource URL(s).`
+      )
+    default:
+      return
   }
 }

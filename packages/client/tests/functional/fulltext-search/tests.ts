@@ -1,6 +1,6 @@
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { PrismaClient } from './node_modules/@prisma/client'
+import type { PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -91,12 +91,13 @@ testMatrix.setupTestSuite(
         })
         .catch((e) => {
           const error = e as Error
-          error.message = error.message
-            // Remove `tsquery.c` line number to make error snapshots portable across PostgreSQL versions.
-            .replace(/line: Some\(\d+\)/, 'line: Some(0)')
-            // Align Rust / Driver Adapters divergences: "t1.[column]" -> "`User`.[column]"
-            .replace(/t0\./g, '`User`.')
-            .replace(' as t0', '')
+          // Prisma Client surfaces unmapped DB errors as P2039 and raw
+          // query failures as P2010; both use the same `Code: \`X\`.
+          // Message: \`Y\`` suffix. Extract just the DB message to keep
+          // the snapshot portable across drivers and engine modes
+          // (local driver adapter vs. qpe=remote).
+          const matches = error.message.match(/(?:Code: `[^`]+`\. )?Message: `([^`]*)`/)
+          error.message = matches?.[1] ?? error.message
           throw error
         })
 

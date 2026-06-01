@@ -1,9 +1,4 @@
 import { build } from '../../../helpers/compile/build'
+import { bundledConfig } from '../../../helpers/compile/configs'
 
-void build([
-  {
-    name: 'default',
-    bundle: true,
-    emitTypes: true,
-  },
-])
+void build(bundledConfig)

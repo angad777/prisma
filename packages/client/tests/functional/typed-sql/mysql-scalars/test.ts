@@ -2,9 +2,9 @@ import { expectTypeOf } from 'expect-type'
 
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './generated/prisma/client'
 // @ts-ignore
-import * as Sql from './node_modules/@prisma/client/sql'
+import * as Sql from './generated/prisma/sql'
 
 declare let prisma: PrismaClient
 declare let Prisma: typeof PrismaNamespace
@@ -50,7 +50,8 @@ testMatrix.setupTestSuite(
 
     test('float - output', async () => {
       const result = await prisma.$queryRawTyped(sql.getFloat(id))
-      expect(result[0].float).toBe(12.3)
+      // Account for potential precision loss when storing the value as a FLOAT
+      expect(result[0].float).toBeOneOf([new Float32Array([12.3])[0], 12.3])
       expectTypeOf(result[0].float).toBeNumber()
     })
 

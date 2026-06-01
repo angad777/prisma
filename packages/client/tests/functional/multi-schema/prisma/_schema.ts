@@ -8,12 +8,10 @@ export default testMatrix.setupSchema(({ provider, mapTable }) => {
   return /* Prisma */ `
 generator client {
   provider = "prisma-client-js"
-  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider = "${provider}"
-  url      = env("DATABASE_URI_${provider}")
   schemas  = ["base", "transactional"]
 }
 

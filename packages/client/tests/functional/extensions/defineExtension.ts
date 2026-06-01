@@ -4,7 +4,7 @@ import { expectTypeOf } from 'expect-type'
 import { Prisma as PrismaDefault } from '../../../extension'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 declare let Prisma: typeof PrismaNamespace
@@ -220,7 +220,6 @@ function itxWithinGenericExtension() {
 
     void xclient.$transaction((tx) => {
       expectTypeOf(tx).toHaveProperty('helperMethod')
-      expectTypeOf(tx).not.toHaveProperty('$transaction')
       expectTypeOf(tx).not.toHaveProperty('$extends')
       return Promise.resolve()
     })
@@ -347,6 +346,13 @@ function allResultsGenericExtensionObjectViaDefault() {
   })
 }
 
+// TODO: fix this, it got somehow broken for both Prisma generators after we got rid of Library Engine.
+// ```
+// Message:
+// Type 'unknown' does not satisfy the constraint '"Expected: unknown, Actual: never"'.
+// At: tests/functional/extensions/.generated/extensions.defineExtension (provider=postgresql, qpe=remote)/defineExtension.ts:686:60
+// ```
+//
 testMatrix.setupTestSuite(() => {
   test('client - callback', () => {
     const xprisma = prisma.$extends(clientExtensionCallback())

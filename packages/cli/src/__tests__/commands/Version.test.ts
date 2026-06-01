@@ -1,122 +1,60 @@
-import { enginesVersion, getCliQueryEngineBinaryType } from '@prisma/engines'
-import { BinaryType, download } from '@prisma/fetch-engine'
-import { getBinaryTargetForCurrentPlatform, jestConsoleContext, jestContext } from '@prisma/get-platform'
-import { engineEnvVarMap } from '@prisma/internals'
-import { ensureDir } from 'fs-extra'
-import path from 'path'
+import { enginesVersion } from '@prisma/engines'
+import { jestConsoleContext, jestContext } from '@prisma/get-platform'
 import { version as typeScriptVersion } from 'typescript'
 
 import packageJson from '../../../package.json'
 
 const ctx = jestContext.new().add(jestConsoleContext()).assemble()
-const testIf = (condition: boolean) => (condition ? test : test.skip)
-const runLibraryTest =
-  getCliQueryEngineBinaryType() === BinaryType.QueryEngineLibrary && !process.env.PRISMA_QUERY_ENGINE_LIBRARY
-
-const runBinaryTest =
-  getCliQueryEngineBinaryType() === BinaryType.QueryEngineBinary && !process.env.PRISMA_QUERY_ENGINE_BINARY
 
 describe('version', () => {
-  // Node-API Tests
+  test('does not download query-engine', async () => {
+    ctx.fixture('version')
+    const data = await ctx.cli('version')
+    expect(data.exitCode).toBe(0)
+    expect(cleanSnapshot(data.stdout)).toMatchInlineSnapshot(`
+      "prisma               : 0.0.0
+      @prisma/client       : 0.0.0
+      Operating System     : OS
+      Architecture         : ARCHITECTURE
+      Node.js              : NODEJS_VERSION
+      TypeScript           : TYPESCRIPT_VERSION
+      Query Compiler       : enabled
+      PSL                  : @prisma/prisma-schema-wasm CLI_VERSION.ENGINE_VERSION
+      Schema Engine        : schema-engine-cli ENGINE_VERSION (at sanitized_path/schema-engine-TEST_PLATFORM)
+      Default Engines Hash : ENGINE_VERSION
+      Studio               : STUDIO_VERSION"
+    `)
+    expect(cleanSnapshot(data.stderr)).toMatchInlineSnapshot(`
+      "Loaded Prisma config from prisma.config.ts.
 
-  testIf(runLibraryTest)('basic version (Node-API)', async () => {
-    const data = await ctx.cli('--version')
-    expect(cleanSnapshot(data.stdout)).toMatchSnapshot()
+      Prisma schema loaded from schema.prisma."
+    `)
   })
-
-  testIf(runLibraryTest)(
-    'version with custom binaries (Node-API)',
-    async () => {
-      const enginesDir = path.join(__dirname, 'version-test-engines')
-      await ensureDir(enginesDir)
-      const binaryPaths = await download({
-        binaries: {
-          'schema-engine': enginesDir,
-          'libquery-engine': enginesDir,
-        },
-        version: enginesVersion,
-        failSilent: false,
-      })
-      // This Omits query-engine from the map
-      const { ['query-engine']: qe, ...envVarMap } = engineEnvVarMap
-
-      const binaryTarget = await getBinaryTargetForCurrentPlatform()
-
-      for (const engine in envVarMap) {
-        const envVar = envVarMap[engine]
-        process.env[envVar] = binaryPaths[engine][binaryTarget]
-      }
-
-      const data = await ctx.cli('--version')
-      expect(cleanSnapshot(data.stdout, enginesVersion)).toMatchSnapshot()
-
-      // cleanup
-      for (const engine in envVarMap) {
-        const envVar = envVarMap[engine]
-        delete process[envVar]
-      }
-    },
-    50_000,
-  )
-
-  // Binary Tests
-
-  testIf(runBinaryTest)(
-    'basic version',
-    async () => {
-      const data = await ctx.cli('--version')
-      expect(cleanSnapshot(data.stdout)).toMatchSnapshot()
-    },
-    10_000,
-  )
-
-  testIf(runBinaryTest)(
-    'version with custom binaries',
-    async () => {
-      const enginesDir = path.join(__dirname, 'version-test-engines')
-      await ensureDir(enginesDir)
-      const binaryPaths = await download({
-        binaries: {
-          'schema-engine': enginesDir,
-          'query-engine': enginesDir,
-        },
-        version: enginesVersion,
-        failSilent: false,
-      })
-
-      const binaryTarget = await getBinaryTargetForCurrentPlatform()
-      const { ['libquery-engine']: qe, ...envVarMap } = engineEnvVarMap
-      for (const engine in envVarMap) {
-        const envVar = envVarMap[engine]
-        process.env[envVar] = binaryPaths[engine][binaryTarget]
-      }
-
-      const data = await ctx.cli('--version')
-      expect(cleanSnapshot(data.stdout, enginesVersion)).toMatchSnapshot()
-
-      // cleanup
-      for (const engine in envVarMap) {
-        const envVar = envVarMap[engine]
-        delete process[envVar]
-      }
-    },
-    50_000,
-  )
 })
 
 function cleanSnapshot(str: string, versionOverride?: string): string {
   // sanitize engine path
-  // Query Engine (Node-API) : libquery-engine e996df5d66a2314d1da15d31047f9777fc2fbdd9 (at ../../home/runner/work/prisma/prisma/node_modules/.pnpm/@prisma+engines@3.11.0-41.e996df5d66a2314d1da15d31047f9777fc2fbdd9/node_modules/@prisma/engines/libquery_engine-TEST_PLATFORM.LIBRARY_TYPE.node)
-  // +                                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  // Query Engine (Node-API) : libquery-engine 5a2e5869b69a983e279380ec68596b71beae9eff (at ../../cli/src/__tests__/commands/version-test-engines/libquery_engine-TEST_PLATFORM.LIBRARY_TYPE.node, resolved by PRISMA_QUERY_ENGINE_LIBRARY)
-  // =>                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  // Query Engine (Node-API) : libquery-engine e996df5d66a2314d1da15d31047f9777fc2fbdd9 (at sanitized_path/libquery_engine-TEST_PLATFORM.LIBRARY_TYPE.node)
+  // Schema Engine : schema-engine e996df5d66a2314d1da15d31047f9777fc2fbdd9 (at ../../home/runner/work/prisma/prisma/node_modules/.pnpm/@prisma+engines@3.11.0-41.e996df5d66a2314d1da15d31047f9777fc2fbdd9/node_modules/@prisma/engines/schema-engine-TEST_PLATFORM)
+  // +
+  // Schema Engine : schema-engine 5a2e5869b69a983e279380ec68596b71beae9eff (at ../../cli/src/__tests__/commands/version-test-engines/schema-engine-TEST_PLATFORM, resolved by PRISMA_SCHEMA_ENGINE_BINARY)
+  // =>
+  // Schema Engine : schema-engine e996df5d66a2314d1da15d31047f9777fc2fbdd9 (at sanitized_path/schema-engine-TEST_PLATFORM)
   //                                                                                    ^^^^^^^^^^^^^^^^^^^
   str = str.replace(/\(at (.*engines)(\/|\\)/g, '(at sanitized_path/')
+
+  // Replace 'Loaded Prisma config from "/.../prisma.config.ts"'
+  // with 'Loaded Prisma config from "sanitized prisma.config.ts path"'
+  str = str.replace(
+    /Loaded Prisma config from ".*(\/|\\)prisma\.config\.ts"/g,
+    'Loaded Prisma config from "sanitized prisma.config.ts path"',
+  )
 
   // TODO: replace '[a-z0-9]{40}' with 'ENGINE_VERSION'.
   // Currently, the engine version of @prisma/prisma-schema-wasm isn't necessarily the same as the enginesVersion
   str = str.replace(/([0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.)([a-z0-9-]+)/g, 'CLI_VERSION.ENGINE_VERSION')
+
+  // Replace locally built prisma-schema-wasm and schema-engine-wasm versions linked via package.json
+  str = str.replace(/link:([A-Z]:)?(\/[\w-]+)+/g, 'CLI_VERSION.ENGINE_VERSION')
 
   // replace engine version hash
   const defaultEngineVersion = enginesVersion
@@ -130,7 +68,7 @@ function cleanSnapshot(str: string, versionOverride?: string): string {
   str = str.replace(new RegExp(`(TypeScript\\s+:) ${typeScriptVersion}`, 'g'), '$1 TYPESCRIPT_VERSION')
 
   // replace studio version
-  str = str.replace(packageJson.devDependencies['@prisma/studio-server'], 'STUDIO_VERSION')
+  str = str.replace(packageJson.dependencies['@prisma/studio-core'], 'STUDIO_VERSION')
 
   // sanitize windows specific engine names
   str = str.replace(/\.exe/g, '')

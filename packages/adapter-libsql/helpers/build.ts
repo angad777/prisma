@@ -1,4 +1,16 @@
 import { build } from '../../../helpers/compile/build'
-import { adapterConfig } from '../../../helpers/compile/configs'
+import { bundledConfig } from '../../../helpers/compile/configs'
 
-void build(adapterConfig)
+const defaultBuildOptions = bundledConfig.map((opts) => ({
+  ...opts,
+  entryPoints: ['src/index-node.ts'],
+  outfile: 'dist/index-node',
+}))
+
+const webBuildOptions = bundledConfig.map((opts) => ({
+  ...opts,
+  entryPoints: ['src/index-web.ts'],
+  outfile: 'dist/index-web',
+}))
+
+void build([...defaultBuildOptions, ...webBuildOptions])

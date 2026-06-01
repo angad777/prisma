@@ -1,19 +1,32 @@
-import { serialize } from '@prisma/get-platform/src/test-utils/jestSnapshotSerializer'
-import fs from 'fs'
-import path from 'path'
-import stripAnsi from 'strip-ansi'
+import fs from 'node:fs'
+import path from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 
-import { getDMMF, isRustPanic, MultipleSchemas } from '../..'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+import { getDMMF, MultipleSchemas } from '../..'
 import { fixturesPath } from '../__utils__/fixtures'
 
-jest.setTimeout(10_000)
+function restoreEnvSnapshot(snapshot: NodeJS.ProcessEnv) {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in snapshot)) {
+      delete process.env[key]
+    }
+  }
+
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (value === undefined) {
+      delete process.env[key]
+    } else {
+      process.env[key] = value
+    }
+  }
+}
 
 if (process.env.CI) {
   // 10s is not always enough for the "big schema" test on macOS CI.
-  jest.setTimeout(60_000)
+  vi.setConfig({ testTimeout: 60_000 })
 }
-
-const testIf = (condition: boolean) => (condition ? test : test.skip)
 
 describe('getDMMF', () => {
   // Note: to run these tests locally, prepend the env vars `FORCE_COLOR=0` and `CI=1` to your test command,
@@ -21,16 +34,18 @@ describe('getDMMF', () => {
   describe.skip('colors', () => {
     // backup env vars
     const OLD_ENV = { ...process.env }
-    const { NO_COLOR: _, ...OLD_ENV_WITHOUT_NO_COLOR } = OLD_ENV
 
     beforeEach(() => {
       // jest.resetModules()
-      process.env = { ...OLD_ENV_WITHOUT_NO_COLOR, FORCE_COLOR: '0', CI: '1' }
+      restoreEnvSnapshot(OLD_ENV)
+      delete process.env.NO_COLOR
+      process.env.FORCE_COLOR = '0'
+      process.env.CI = '1'
     })
 
     afterEach(() => {
       // reset env vars to backup state
-      process.env = { ...OLD_ENV }
+      restoreEnvSnapshot(OLD_ENV)
     })
 
     test('failures should have colors by default', async () => {
@@ -100,7 +115,6 @@ describe('getDMMF', () => {
       const datamodel = `
         datasource db {
           provider = "sqlite"
-          url      = "file:dev.db"
         }
         model User {
           id        Int      @default(autoincrement())
@@ -111,22 +125,22 @@ describe('getDMMF', () => {
       try {
         await getDMMF({ datamodel })
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
+        expect(stripVTControlCharacters(e.message)).toMatchInlineSnapshot(`
           "Prisma schema validation - (get-dmmf wasm)
           Error code: P1012
           error: Error parsing attribute "@default": The \`autoincrement()\` default value is used on a non-id field even though the datasource does not support this.
-            -->  schema.prisma:7
+            -->  schema.prisma:6
              | 
-           6 |         model User {
-           7 |           id        Int      @default(autoincrement())
-           8 |           email     String   @unique
+           5 |         model User {
+           6 |           id        Int      @default(autoincrement())
+           7 |           email     String   @unique
              | 
           error: Error parsing attribute "@default": The \`autoincrement()\` default value is used on a non-indexed field even though the datasource does not support this.
-            -->  schema.prisma:7
+            -->  schema.prisma:6
              | 
-           6 |         model User {
-           7 |           id        Int      @default(autoincrement())
-           8 |           email     String   @unique
+           5 |         model User {
+           6 |           id        Int      @default(autoincrement())
+           7 |           email     String   @unique
              | 
 
           Validation Error Count: 2
@@ -142,7 +156,6 @@ describe('getDMMF', () => {
       const datamodel = `
         datasource db {
           provider = "mysql"
-          url      = env("MY_MYSQL_DB")
         }
         model User {
           id        Int      @default(autoincrement())
@@ -153,15 +166,15 @@ describe('getDMMF', () => {
       try {
         await getDMMF({ datamodel })
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
+        expect(stripVTControlCharacters(e.message)).toMatchInlineSnapshot(`
           "Prisma schema validation - (get-dmmf wasm)
           Error code: P1012
           error: Error parsing attribute "@default": The \`autoincrement()\` default value is used on a non-indexed field even though the datasource does not support this.
-            -->  schema.prisma:7
+            -->  schema.prisma:6
              | 
-           6 |         model User {
-           7 |           id        Int      @default(autoincrement())
-           8 |           email     String   @unique
+           5 |         model User {
+           6 |           id        Int      @default(autoincrement())
+           7 |           email     String   @unique
              | 
 
           Validation Error Count: 1
@@ -169,40 +182,6 @@ describe('getDMMF', () => {
 
           Prisma CLI Version : 0.0.0"
         `)
-      }
-    })
-
-    testIf(process.platform !== 'win32')(`fails when reading a datamodel path that doesn't exist`, async () => {
-      expect.assertions(2)
-
-      try {
-        await getDMMF({ datamodelPath: './404/it-does-not-exist' })
-      } catch (e) {
-        expect(isRustPanic(e)).toBe(false)
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
-          "Error while trying to read the datamodel path
-          Details: ENOENT: no such file or directory, open './404/it-does-not-exist'
-          Datamodel path: "./404/it-does-not-exist"
-          [Context: getDmmf]
-
-          Prisma CLI Version : 0.0.0"
-        `)
-      }
-    })
-
-    test(`panics when the given datamodel isnt' a string`, async () => {
-      expect.assertions(3)
-
-      try {
-        // @ts-expect-error
-        await getDMMF({ datamodel: true })
-      } catch (e) {
-        expect(isRustPanic(e)).toBe(true)
-        expect(serialize(e.message)).toMatchInlineSnapshot(`
-          ""RuntimeError: panicked at prisma-fmt/src/get_dmmf.rs:0:0:
-          Failed to deserialize GetDmmfParams: data did not match any variant of untagged enum SchemaFileInput at line 1 column 20""
-        `)
-        expect(e.rustStack).toBeTruthy()
       }
     })
 
@@ -214,7 +193,6 @@ describe('getDMMF', () => {
       
       datasource my_db {
         provider = "sqlite"
-        url      = "file:dev.db"
       }
       
       model User {
@@ -247,54 +225,54 @@ describe('getDMMF', () => {
       try {
         await getDMMF({ datamodel })
       } catch (e) {
-        expect(stripAnsi(e.message)).toMatchInlineSnapshot(`
+        expect(stripVTControlCharacters(e.message)).toMatchInlineSnapshot(`
           "Prisma schema validation - (get-dmmf wasm)
           Error code: P1012
           error: Field "id" is already defined on model "User".
-            -->  schema.prisma:12
+            -->  schema.prisma:11
              | 
+          10 |         id           String     @id @default(cuid())
           11 |         id           String     @id @default(cuid())
-          12 |         id           String     @id @default(cuid())
              | 
           error: Field "permissions" is already defined on model "User".
-            -->  schema.prisma:17
-             | 
-          16 |         permissions  Permission @default()
-          17 |         permissions  Permission @default("")
-             | 
-          error: Field "posts" is already defined on model "User".
-            -->  schema.prisma:19
-             | 
-          18 |         posts        Post[]
-          19 |         posts        Post[]
-             | 
-          error: Error validating model "User": At most one field must be marked as the id field with the \`@id\` attribute.
-            -->  schema.prisma:10
-             | 
-           9 |       
-          10 |       model User {
-          11 |         id           String     @id @default(cuid())
-          12 |         id           String     @id @default(cuid())
-          13 |         name         String
-          14 |         email        String     @unique
-          15 |         status       String     @default("")
-          16 |         permissions  Permission @default()
-          17 |         permissions  Permission @default("")
-          18 |         posts        Post[]
-          19 |         posts        Post[]
-          20 |       }
-             | 
-          error: Argument "value" is missing.
             -->  schema.prisma:16
              | 
-          15 |         status       String     @default("")
-          16 |         permissions  Permission @default()
+          15 |         permissions  Permission @default()
+          16 |         permissions  Permission @default("")
+             | 
+          error: Field "posts" is already defined on model "User".
+            -->  schema.prisma:18
+             | 
+          17 |         posts        Post[]
+          18 |         posts        Post[]
+             | 
+          error: Error validating model "User": At most one field must be marked as the id field with the \`@id\` attribute.
+            -->  schema.prisma:9
+             | 
+           8 |       
+           9 |       model User {
+          10 |         id           String     @id @default(cuid())
+          11 |         id           String     @id @default(cuid())
+          12 |         name         String
+          13 |         email        String     @unique
+          14 |         status       String     @default("")
+          15 |         permissions  Permission @default()
+          16 |         permissions  Permission @default("")
+          17 |         posts        Post[]
+          18 |         posts        Post[]
+          19 |       }
+             | 
+          error: Argument "value" is missing.
+            -->  schema.prisma:15
+             | 
+          14 |         status       String     @default("")
+          15 |         permissions  Permission @default()
              | 
           error: Error parsing attribute "@default": Expected an enum value, but found \`""\`.
-            -->  schema.prisma:17
+            -->  schema.prisma:16
              | 
-          16 |         permissions  Permission @default()
-          17 |         permissions  Permission @default("")
+          15 |         permissions  Permission @default()
+          16 |         permissions  Permission @default("")
              | 
 
           Validation Error Count: 6
@@ -317,11 +295,10 @@ describe('getDMMF', () => {
         
         datasource my_db {
           provider = "sqlite"
-          url      = "file:dev.db"
         }
       `
 
-      const dmmf = await getDMMF({ datamodel, datamodelPath: './404/it-does-not-exist' })
+      const dmmf = await getDMMF({ datamodel })
       expect(dmmf.datamodel).toMatchInlineSnapshot(`
         {
           "enums": [],
@@ -350,7 +327,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "sqlite"
-          url      = "file:dev.db"
         }
         model A {
           id Int @id
@@ -368,7 +344,6 @@ describe('getDMMF', () => {
           'ds.prisma',
           `datasource db {
             provider = "sqlite"
-            url      = "file:dev.db"
           }`,
         ],
         [
@@ -395,7 +370,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "postgresql"
-          url      = env("MY_POSTGRESQL_DB")
         }
         model A {
           id Int @id
@@ -412,7 +386,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "mysql"
-          url      = env("MY_MYSQL_DB")
         }
         model A {
           id Int @id
@@ -429,7 +402,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "sqlserver"
-          url      = env("MY_SQLSERVER_DB")
         }
         model A {
           id Int @id
@@ -446,7 +418,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "mongodb"
-          url      = "MY_MONGODB_DB"
         }
         model A {
           id Int @id @map("_id")
@@ -463,7 +434,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "postgresql"
-          url      = env("MY_POSTGRESQL_DB")
         }
         model User {
           id        Int      @default(autoincrement())
@@ -480,7 +450,6 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "postgres"
-          url      = env("MY_POSTGRES_DB")
         }
   
         // From https://www.prisma.io/docs/reference/tools-and-interfaces/prisma-schema/data-model#examples-3
@@ -528,10 +497,9 @@ describe('getDMMF', () => {
         datamodel: `
         datasource db {
           provider = "postgres"
-          url      = env("MY_POSTGRES_DB")
         }
         generator client {
-          provider        = "prisma-client-js"
+          provider = "prisma-client-js"
         }
         
         model User1 {
@@ -574,10 +542,10 @@ describe('getDMMF', () => {
       expect(str.length).toMatchSnapshot()
     })
 
-    test('big schema read via datamodel path', async () => {
-      const datamodelPath = path.join(fixturesPath, 'bigschema.prisma')
+    test('big schema read', async () => {
+      const file = await fs.promises.readFile(path.join(fixturesPath, 'bigschema.prisma'), 'utf-8')
       const dmmf = await getDMMF({
-        datamodelPath,
+        datamodel: file,
       })
       const str = JSON.stringify(dmmf)
       expect(str.length).toMatchSnapshot()

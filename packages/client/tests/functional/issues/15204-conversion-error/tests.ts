@@ -1,6 +1,6 @@
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { PrismaClient } from './node_modules/@prisma/client'
+import type { PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -37,6 +37,10 @@ testMatrix.setupTestSuite(
     optOut: {
       from: ['mysql', 'mongodb', 'sqlserver', 'postgresql', 'cockroachdb'],
       reason: 'SQLite-specific test',
+    },
+    skipDriverAdapter: {
+      from: ['js_better_sqlite3', 'js_d1', 'js_libsql'],
+      reason: 'Tracked in https://linear.app/prisma-company/issue/ORM-1362/fix-issues15204-conversion-error',
     },
   },
 )

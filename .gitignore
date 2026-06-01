@@ -7,19 +7,18 @@ build
 tmp
 pnpm-debug.log
 .DS_Store
+.turbo
 
-query-engine*
+/target
 migration-engine*
 schema-engine*
-libquery_engine*
-libquery-engine*
-query_engine-windows.dll.node
 
 *tmp.db
 dist/
 
 *.tsbuildinfo
 .prisma
+.attest
 .pnpm-store
 
 .vscode/*

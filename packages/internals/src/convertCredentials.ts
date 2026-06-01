@@ -1,4 +1,4 @@
-import type { ConnectorType } from '@prisma/generator-helper'
+import type { ConnectorType } from '@prisma/generator'
 import path from 'path'
 import * as NodeURL from 'url'
 
@@ -85,9 +85,7 @@ export function uriToCredentials(connectionString: string): DatabaseCredentials 
   try {
     uri = new NodeURL.URL(connectionString)
   } catch (e) {
-    throw new Error(
-      'Invalid data source URL, see https://www.prisma.io/docs/reference/database-reference/connection-urls',
-    )
+    throw new Error('Invalid data source URL, see https://pris.ly/d/config-url')
   }
 
   const type = protocolToConnectorType(uri.protocol)

@@ -1,19 +1,39 @@
 import { jestConsoleContext, jestContext } from '@prisma/get-platform'
-import { getSchema, getSchemaWithPath, MultipleSchemas, toSchemasContainer } from '@prisma/internals'
+import {
+  createSchemaPathInput,
+  getSchemaWithPath,
+  inferDirectoryConfig,
+  loadSchemaContext,
+  MultipleSchemas,
+  toSchemasContainer,
+} from '@prisma/internals'
 import fs from 'fs-jetpack'
 import path from 'path'
 
 import { Migrate } from '../Migrate'
+import { listMigrations } from '../utils/listMigrations'
+import { configContextContributor } from './__helpers__/prismaConfig'
 
-const ctx = jestContext.new().add(jestConsoleContext()).assemble()
+const ctx = jestContext.new().add(jestConsoleContext()).add(configContextContributor()).assemble()
 
 describe('applyMigrations', () => {
   it('should succeed', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.applyMigrations({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -21,15 +41,26 @@ describe('applyMigrations', () => {
         "appliedMigrationNames": [],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should fail on existing brownfield db', async () => {
     ctx.fixture('existing-db-brownfield')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.applyMigrations({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).rejects.toMatchInlineSnapshot(`
@@ -38,15 +69,15 @@ describe('applyMigrations', () => {
       The database schema is not empty. Read more about how to baseline an existing production database: https://pris.ly/d/migrate-baseline
       "
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('createDatabase', () => {
   it('should succeed - ConnectionString - sqlite', async () => {
     ctx.fixture('schema-only-sqlite')
-    const migrate = new Migrate()
-    const result = migrate.engine.createDatabase({
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
+    const result = migrate.engine.createDatabase!({
       datasource: {
         tag: 'ConnectionString',
         url: 'file:dev.db',
@@ -58,40 +89,45 @@ describe('createDatabase', () => {
         "databaseName": "dev.db",
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should succeed - Schema - postgresql', async () => {
     ctx.fixture('schema-only')
-    const schemas = await getSchema()
-    const migrate = new Migrate()
-    const result = migrate.engine.createDatabase({
+    const schemaContext = await loadSchemaContext()
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
+    const result = migrate.engine.createDatabase!({
       datasource: {
         tag: 'Schema',
-        ...toSchemasContainer(schemas),
+        ...toSchemasContainer(schemaContext.schemaFiles),
       },
     })
 
     await expect(result).rejects.toMatchInlineSnapshot(`
       "P1009
 
-      Database \`tests\` already exists on the database server at \`localhost:5432\`
+      Database \`tests\` already exists on the database server
       "
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('createMigration', () => {
   it('should succeed - existing-db-1-migration', async () => {
     ctx.fixture('schema-only-sqlite')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = migrate.engine.createMigration({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const result = migrate.createMigration({
       migrationName: 'my_migration',
       draft: false,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -99,18 +135,23 @@ describe('createMigration', () => {
         "generatedMigrationName": "20201231000000_my_migration",
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('draft should succeed - existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = migrate.engine.createMigration({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const result = migrate.createMigration({
       migrationName: 'draft_123',
       draft: true,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -118,14 +159,14 @@ describe('createMigration', () => {
         "generatedMigrationName": "20201231000000_draft_123",
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('dbExecute', () => {
   it('should succeed - sqlite', async () => {
     ctx.fixture('schema-only-sqlite')
-    const migrate = new Migrate()
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.dbExecute({
       datasourceType: {
         tag: 'url',
@@ -137,17 +178,28 @@ describe('dbExecute', () => {
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`null`)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('devDiagnostic', () => {
   it('createMigration', async () => {
     ctx.fixture('schema-only-sqlite')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.devDiagnostic({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
     await expect(result).resolves.toMatchInlineSnapshot(`
       {
@@ -157,15 +209,26 @@ describe('devDiagnostic', () => {
       }
     `)
 
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('reset because drift', async () => {
     ctx.fixture('existing-db-1-migration-conflict')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.devDiagnostic({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
     await expect(result).resolves.toMatchInlineSnapshot(`
       {
@@ -188,18 +251,29 @@ describe('devDiagnostic', () => {
       }
     `)
 
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('diagnoseMigrationHistory', () => {
   it('optInToShadowDatabase true should succeed - existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.diagnoseMigrationHistory({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
       optInToShadowDatabase: true,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -210,16 +284,27 @@ describe('diagnoseMigrationHistory', () => {
         "history": null,
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it(' optInToShadowDatabase false should succeed - existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.diagnoseMigrationHistory({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
       optInToShadowDatabase: false,
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -230,7 +315,7 @@ describe('diagnoseMigrationHistory', () => {
         "history": null,
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
@@ -238,7 +323,7 @@ describe('ensureConnectionValidity', () => {
   it('should succeed when database exists - SQLite', async () => {
     ctx.fixture('schema-only-sqlite')
     ctx.fs.write('dev.db', '')
-    const migrate = new Migrate()
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.ensureConnectionValidity({
       datasource: {
         tag: 'ConnectionString',
@@ -247,27 +332,33 @@ describe('ensureConnectionValidity', () => {
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`{}`)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should succeed when database exists - PostgreSQL', async () => {
     ctx.fixture('schema-only')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.ensureConnectionValidity({
       datasource: {
         tag: 'Schema',
-        ...toSchemasContainer(schemas),
+        ...toSchemasContainer(schemaContext.schemaFiles),
       },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`{}`)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should fail when database does not exist - SQLite', async () => {
     ctx.fixture('schema-only-sqlite')
-    const migrate = new Migrate()
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.ensureConnectionValidity({
       datasource: {
         tag: 'ConnectionString',
@@ -278,15 +369,15 @@ describe('ensureConnectionValidity', () => {
     await expect(result).rejects.toMatchInlineSnapshot(`
       "P1003
 
-      Database \`dev.db\` does not exist at \`dev.db\`.
+      Database \`dev.db\` does not exist
       "
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should fail when server does not exist - PostgreSQL', async () => {
     ctx.fixture('schema-only-sqlite')
-    const migrate = new Migrate()
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.ensureConnectionValidity({
       datasource: {
         tag: 'ConnectionString',
@@ -302,7 +393,7 @@ describe('ensureConnectionValidity', () => {
       Please make sure your database server is running at \`server-does-not-exist:5432\`.
       "
     `)
-    migrate.stop()
+    await migrate.stop()
     // It was flaky on CI (but rare)
     // higher timeout might help
   }, 10_000)
@@ -312,11 +403,22 @@ describe('evaluateDataLoss', () => {
   // migration is not yet applied
   it('should succeed - schema-only-sqlite', async () => {
     ctx.fixture('schema-only-sqlite')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.evaluateDataLoss({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
-      schema: toSchemasContainer(schemas),
+      migrationsList,
+      schema: toSchemasContainer(schemaContext.schemaFiles),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -326,17 +428,28 @@ describe('evaluateDataLoss', () => {
         "warnings": [],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   // migration is already applied so should be empty
   it('should succeed - existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const result = migrate.engine.evaluateDataLoss({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
-      schema: toSchemasContainer(schemas),
+      migrationsList,
+      schema: toSchemasContainer(schemaContext.schemaFiles),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -346,24 +459,30 @@ describe('evaluateDataLoss', () => {
         "warnings": [],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('getDatabaseVersion - PostgreSQL', () => {
   it('[No params] should succeed', async () => {
     ctx.fixture('schema-only')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.getDatabaseVersion()
     await expect(result).resolves.toContain('PostgreSQL')
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('[SchemaPath] should succeed', async () => {
     ctx.fixture('schema-only')
-    const { schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate()
+    const { schemas } = (await getSchemaWithPath({ schemaPath: createSchemaPathInput({ baseDir: ctx.configDir() }) }))!
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.getDatabaseVersion({
       datasource: {
         tag: 'Schema',
@@ -371,11 +490,12 @@ describe('getDatabaseVersion - PostgreSQL', () => {
       },
     })
     await expect(result).resolves.toContain('PostgreSQL')
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('[ConnectionString] should succeed', async () => {
-    const migrate = new Migrate()
+    ctx.fixture('schema-only')
+    const migrate = await Migrate.setup({ schemaEngineConfig: await ctx.config(), baseDir: ctx.configDir() })
     const result = migrate.engine.getDatabaseVersion({
       datasource: {
         tag: 'ConnectionString',
@@ -383,43 +503,7 @@ describe('getDatabaseVersion - PostgreSQL', () => {
       },
     })
     await expect(result).resolves.toContain('PostgreSQL')
-    migrate.stop()
-  })
-})
-
-describe('listMigrationDirectories', () => {
-  it('should succeed - existing-db-1-migration', async () => {
-    ctx.fixture('existing-db-1-migration')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = migrate.engine.listMigrationDirectories({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
-    })
-    await expect(result).resolves.toMatchInlineSnapshot(`
-      {
-        "migrations": [
-          "20201231000000_init",
-        ],
-      }
-    `)
-
-    migrate.stop()
-  })
-
-  it('should succeed - schema-only-sqlite', async () => {
-    ctx.fixture('schema-only-sqlite')
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = migrate.engine.listMigrationDirectories({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
-    })
-    await expect(result).resolves.toMatchInlineSnapshot(`
-      {
-        "migrations": [],
-      }
-    `)
-
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
@@ -428,8 +512,14 @@ describe('markMigrationRolledBack', () => {
     jest.setTimeout(10_000)
     ctx.fixture('existing-db-1-migration')
 
-    const { schemaPath } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
 
     const resultMarkRolledBacked = migrate.engine.markMigrationRolledBack({
       migrationName: '20201014154943_init',
@@ -442,18 +532,23 @@ describe('markMigrationRolledBack', () => {
       "
     `)
 
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = await migrate.engine.createMigration({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const result = await migrate.createMigration({
       migrationName: 'draft_123',
       draft: true,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
     })
 
     expect(result).toMatchInlineSnapshot(`
@@ -468,8 +563,13 @@ describe('markMigrationRolledBack', () => {
     )
 
     try {
+      const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
       await migrate.engine.applyMigrations({
-        migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+        migrationsList,
+        filters: {
+          externalTables: [],
+          externalEnums: [],
+        },
       })
     } catch (e) {
       expect(e.message).toContain('no such column: SOMETHING_THAT_DOES_NOT_WORK')
@@ -479,17 +579,19 @@ describe('markMigrationRolledBack', () => {
       migrationName: result.generatedMigrationName!,
     })
 
-    await expect(resultMarkRolledBacked).resolves.toMatchSnapshot()
+    await expect(resultMarkRolledBacked).resolves.toMatchInlineSnapshot(`{}`)
 
+    const migrationsList1 = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const resultMarkAppliedFailed = migrate.engine.markMigrationApplied({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList: migrationsList1,
       migrationName: result.generatedMigrationName!,
     })
 
-    await expect(resultMarkAppliedFailed).resolves.toMatchSnapshot()
+    await expect(resultMarkAppliedFailed).resolves.toMatchInlineSnapshot(`{}`)
 
+    const migrationsList2 = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const resultMarkApplied = migrate.engine.markMigrationApplied({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList: migrationsList2,
       migrationName: result.generatedMigrationName!,
     })
 
@@ -500,20 +602,25 @@ describe('markMigrationRolledBack', () => {
       "
     `)
 
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
 describe('markMigrationApplied', () => {
   it('existing-db-1-migration', async () => {
     ctx.fixture('existing-db-1-migration')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-    const result = await migrate.engine.createMigration({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
+    const result = await migrate.createMigration({
       migrationName: 'draft_123',
       draft: true,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
     })
 
     expect(result).toMatchInlineSnapshot(`
@@ -522,14 +629,15 @@ describe('markMigrationApplied', () => {
       }
     `)
 
+    const migrationsList = await listMigrations(migrate.migrationsDirectoryPath!, '')
     const resultMarkApplied = migrate.engine.markMigrationApplied({
-      migrationsDirectoryPath: migrate.migrationsDirectoryPath!,
+      migrationsList,
       migrationName: result.generatedMigrationName!,
     })
 
     await expect(resultMarkApplied).resolves.toMatchInlineSnapshot(`{}`)
 
-    migrate.stop()
+    await migrate.stop()
   })
 })
 
@@ -538,11 +646,21 @@ describe('schemaPush', () => {
   // Since 5.0.0 this RPC does not error anymore if the SQLite database file is missing
   it('should succeed if SQLite database file is missing', async () => {
     ctx.fixture('schema-only-sqlite')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.schemaPush({
       force: false,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -552,16 +670,26 @@ describe('schemaPush', () => {
         "warnings": [],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should succeed without warning', async () => {
     ctx.fixture('existing-db-1-draft')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.schemaPush({
       force: false,
-      schema: toSchemasContainer(schemas),
+      schema: toSchemasContainer(schemaContext.schemaFiles),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -571,17 +699,26 @@ describe('schemaPush', () => {
         "warnings": [],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('should return executedSteps 0 with warning if dataloss detected', async () => {
     ctx.fixture('existing-db-brownfield')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.schemaPush({
       force: false,
-      schema: toSchemasContainer(replaceInSchemas(schemas, 'Blog', 'Something')),
+      schema: toSchemasContainer(replaceInSchemas(schemaContext.schemaFiles, 'Blog', 'Something')),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -593,17 +730,26 @@ describe('schemaPush', () => {
         ],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 
   it('force should accept dataloss', async () => {
     ctx.fixture('existing-db-brownfield')
-    const { schemaPath, schemas } = (await getSchemaWithPath())!
-    const migrate = new Migrate(schemaPath)
-
+    const schemaContext = await loadSchemaContext()
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext)
+    const migrate = await Migrate.setup({
+      migrationsDirPath,
+      schemaContext,
+      schemaEngineConfig: await ctx.config(),
+      baseDir: ctx.configDir(),
+    })
     const result = migrate.engine.schemaPush({
       force: true,
-      schema: toSchemasContainer(replaceInSchemas(schemas, 'Blog', 'Something')),
+      schema: toSchemasContainer(replaceInSchemas(schemaContext.schemaFiles, 'Blog', 'Something')),
+      filters: {
+        externalTables: [],
+        externalEnums: [],
+      },
     })
 
     await expect(result).resolves.toMatchInlineSnapshot(`
@@ -615,7 +761,7 @@ describe('schemaPush', () => {
         ],
       }
     `)
-    migrate.stop()
+    await migrate.stop()
   })
 })
 

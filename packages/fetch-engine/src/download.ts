@@ -1,19 +1,14 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { promisify } from 'node:util'
+
 import Debug from '@prisma/debug'
-import {
-  assertNodeAPISupported,
-  BinaryTarget,
-  binaryTargets,
-  getNodeAPIName,
-  getPlatformInfo,
-} from '@prisma/get-platform'
-import execa from 'execa'
-import fs from 'fs'
+import { BinaryTarget, binaryTargets, getPlatformInfo } from '@prisma/get-platform'
+import { execa } from 'execa'
 import { ensureDir } from 'fs-extra'
 import { bold, yellow } from 'kleur/colors'
 import pFilter from 'p-filter'
-import path from 'path'
 import tempDir from 'temp-dir'
-import { promisify } from 'util'
 
 import { BinaryType } from './BinaryType'
 import { chmodPlusX } from './chmodPlusX'
@@ -65,6 +60,11 @@ type BinaryDownloadJob = {
 }
 
 export async function download(options: DownloadOptions): Promise<BinaryPaths> {
+  // no need to do anything, if there are no binaries
+  if (!options.binaries || Object.values(options.binaries).length === 0) {
+    return {} // we don't download anything if nothing is provided
+  }
+
   if (enginesOverride?.['branch'] || enginesOverride?.['folder']) {
     // if this is true the engines have been fetched before and already cached
     // into .cache/prisma/master/_local_ for us to be able to use this version
@@ -89,13 +89,6 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
         'Warning',
       )} Precompiled engine files are not available for ${binaryTarget}. Read more about building your own engines at https://pris.ly/d/build-engines`,
     )
-  } else if (BinaryType.QueryEngineLibrary in options.binaries) {
-    assertNodeAPISupported()
-  }
-
-  // no need to do anything, if there are no binaries
-  if (!options.binaries || Object.values(options.binaries).length === 0) {
-    return {} // we don't download anything if nothing is provided
   }
 
   // merge options
@@ -186,10 +179,9 @@ export async function download(options: DownloadOptions): Promise<BinaryPaths> {
   }
 
   const binaryPaths = binaryJobsToBinaryPaths(binaryJobs)
-  const dir = eval('__dirname')
 
   // this is necessary for pkg
-  if (dir.match(vercelPkgPathRegex)) {
+  if (__dirname.match(vercelPkgPathRegex)) {
     for (const engineType in binaryPaths) {
       const binaryTargets = binaryPaths[engineType]
       for (const binaryTarget in binaryTargets) {
@@ -206,12 +198,7 @@ function getCollectiveBar(options: DownloadOptions): {
   finishBar: () => void
   setProgress: (sourcePath: string) => (progress: number) => void
 } {
-  const hasNodeAPI = 'libquery-engine' in options.binaries
-  const bar = getBar(
-    `Downloading Prisma engines${hasNodeAPI ? ' for Node-API' : ''} for ${options.binaryTargets
-      ?.map((p) => bold(p))
-      .join(' and ')}`,
-  )
+  const bar = getBar(`Downloading Prisma engines for ${options.binaryTargets?.map((p) => bold(p)).join(' and ')}`)
 
   const progressMap: { [key: string]: number } = {}
   // Object.values is faster than Object.keys
@@ -306,11 +293,18 @@ async function binaryNeedsToBeDownloaded(
         return true
       }
     } else if (process.env.PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING) {
-      // If the env var is truthy we do not error if the checksum file is missing
       debug(
-        `The checksum file: ${sha256FilePath} is missing but this was ignored as the PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING environment variable is truthy.`,
+        `the checksum file ${sha256FilePath} is missing but this was ignored because the PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING environment variable is set`,
       )
-      return false
+      if (targetExists) {
+        return false
+      }
+      if (cachedFile) {
+        debug(`copying ${cachedFile} to ${job.targetFilePath}`)
+        await overwriteFile(cachedFile, job.targetFilePath)
+        return false
+      }
+      return true
     } else {
       return true
     }
@@ -337,28 +331,16 @@ async function binaryNeedsToBeDownloaded(
   return false
 }
 
-export async function getVersion(enginePath: string, binaryName: string) {
+export async function getVersion(enginePath: string, _binaryName: string) {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
-    if (binaryName === BinaryType.QueryEngineLibrary) {
-      assertNodeAPISupported()
-
-      const commitHash = require(enginePath).version().commit
-      return `${BinaryType.QueryEngineLibrary} ${commitHash}`
-    } else {
-      const result = await execa(enginePath, ['--version'])
-
-      return result.stdout
-    }
+    const result = await execa(enginePath, ['--version'])
+    return result.stdout
   } catch {}
 
   return undefined
 }
 
 export function getBinaryName(binaryName: BinaryType, binaryTarget: BinaryTarget): string {
-  if (binaryName === BinaryType.QueryEngineLibrary) {
-    return `${getNodeAPIName(binaryTarget, 'fs')}`
-  }
   const extension = binaryTarget === 'windows' ? '.exe' : ''
   return `${binaryName}-${binaryTarget}${extension}`
 }
@@ -471,8 +453,7 @@ export async function maybeCopyToTmp(file: string): Promise<string> {
   // in this case, we are in a "pkg" context with a virtual fs
   // to make this work, we need to copy the binary to /tmp and execute it from there
 
-  const dir = eval('__dirname')
-  if (dir.match(vercelPkgPathRegex)) {
+  if (__dirname.match(vercelPkgPathRegex)) {
     const targetDir = path.join(tempDir, 'prisma-binaries')
     await ensureDir(targetDir)
     const target = path.join(targetDir, path.basename(file))

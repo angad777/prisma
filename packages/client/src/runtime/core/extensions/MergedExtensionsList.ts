@@ -1,5 +1,5 @@
-import { Cache } from '../../../generation/Cache'
-import { lazyProperty } from '../../../generation/lazyProperty'
+import { Cache, lazyProperty } from '@prisma/client-common'
+
 import { dmmfToJSModelName } from '../model/utils/dmmfToJSModelName'
 import { ClientArg, ExtensionArgs, ModelArg, QueryOptionsCb } from '../types/exported/ExtensionArgs'
 import { BatchQueryOptionsCb, QueryOptionsPrivate } from '../types/internal/ExtensionsInternalArgs'
@@ -30,7 +30,10 @@ class MergedExtensionsListNode {
     return previous.concat(newCb)
   })
 
-  constructor(public extension: ExtensionArgs, public previous?: MergedExtensionsListNode) {}
+  constructor(
+    public extension: ExtensionArgs,
+    public previous?: MergedExtensionsListNode,
+  ) {}
 
   getAllComputedFields(dmmfModelName: string): ComputedFieldsMap | undefined {
     return this.computedFieldsCache.getOrCreate(dmmfModelName, () => {

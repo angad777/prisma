@@ -1,9 +1,8 @@
-// @ts-ignore
-import type { PrismaClient } from '@prisma/client'
-
 import { Providers } from '../_utils/providers'
 import { providersNotSupportingRelationJoins } from './_common'
 import testMatrix from './_matrix'
+// @ts-ignore
+import type { PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -294,10 +293,6 @@ testMatrix.setupTestSuite(
     })
   },
   {
-    skipDataProxy: {
-      runtimes: ['edge'],
-      reason: 'Errors are formatted differently in edge client, so snapshots mismatch',
-    },
     optOut: {
       from: providersNotSupportingRelationJoins,
       reason: "Doesn't support relation joins",

@@ -1,39 +1,21 @@
-import Debug from '@prisma/debug'
-import { getEnginesPath } from '@prisma/engines'
-import { getBinaryTargetForCurrentPlatform, getNodeAPIName } from '@prisma/get-platform'
-import { type GetSchemaResult, getSchemaWithPath, mergeSchemas } from '@prisma/internals'
-import {
-  ClientEngineType,
-  extractPreviewFeatures,
-  getClientEngineType,
-  getConfig,
-  getDMMF,
-  getPackedPackage,
-} from '@prisma/internals'
-import copy from '@timsuchanek/copy'
-import fs from 'fs'
-import path from 'path'
-import { performance } from 'perf_hooks'
-import rimraf from 'rimraf'
-import { promisify } from 'util'
+import fs from 'node:fs'
+import path from 'node:path'
 
-import { generateClient } from '../generation/generateClient'
-import { ensureTestClientQueryEngine } from './ensureTestClientQueryEngine'
+import { generateClient } from '@prisma/client-generator-js'
+import Debug from '@prisma/debug'
+import { type GetSchemaResult, getSchemaWithPath, mergeSchemas } from '@prisma/internals'
+import { getConfig, getDMMF, getPackedPackage } from '@prisma/internals'
+import copy from '@timsuchanek/copy'
+import { performance } from 'perf_hooks'
 
 const debug = Debug('prisma:generateInFolder')
-const del = promisify(rimraf)
 
 export interface GenerateInFolderOptions {
   projectDir: string
   packageSource?: string
-  overrideEngineType?: ClientEngineType
 }
 
-export async function generateInFolder({
-  projectDir,
-  packageSource,
-  overrideEngineType,
-}: GenerateInFolderOptions): Promise<number> {
+export async function generateInFolder({ projectDir, packageSource }: GenerateInFolderOptions): Promise<number> {
   const before = performance.now()
   if (!projectDir) {
     throw new Error(`Project dir missing. Usage: ts-node examples/generate.ts examples/accounts`)
@@ -46,7 +28,7 @@ export async function generateInFolder({
   const schemaNotFoundError = new Error(`Could not find any schema.prisma in ${projectDir} or sub directories.`)
 
   try {
-    schemaPathResult = await getSchemaWithPath(undefined, { cwd: projectDir })
+    schemaPathResult = await getSchemaWithPath({ schemaPath: { baseDir: projectDir }, cwd: projectDir })
   } catch (e) {
     debug('Error in getSchemaPath', e)
   }
@@ -57,17 +39,11 @@ export async function generateInFolder({
 
   const { schemas, schemaPath } = schemaPathResult
 
-  if (overrideEngineType) {
-    process.env.PRISMA_CLIENT_ENGINE_TYPE = overrideEngineType
-  }
-
-  const config = await getConfig({ datamodel: schemas, ignoreEnvVarErrors: true })
-  const previewFeatures = extractPreviewFeatures(config)
-  const clientEngineType = getClientEngineType(config.generators[0])
+  const config = await getConfig({ datamodel: schemas })
 
   const outputDir = path.join(projectDir, 'node_modules/@prisma/client')
 
-  await del(outputDir)
+  await fs.promises.rm(outputDir, { force: true, recursive: true })
 
   if (packageSource) {
     await copy({
@@ -81,40 +57,13 @@ export async function generateInFolder({
     await getPackedPackage('@prisma/client', outputDir)
   }
 
-  const binaryTarget = await getBinaryTargetForCurrentPlatform()
-
-  const enginesPath = getEnginesPath()
-  const queryEngineLibraryPath =
-    process.env.PRISMA_QUERY_ENGINE_LIBRARY ?? path.join(enginesPath, getNodeAPIName(binaryTarget, 'fs'))
-  const queryEngineBinaryPath =
-    process.env.PRISMA_QUERY_ENGINE_BINARY ??
-    path.join(enginesPath, `query-engine-${binaryTarget}${binaryTarget === 'windows' ? '.exe' : ''}`)
-
-  await ensureTestClientQueryEngine(clientEngineType, binaryTarget)
-
-  const binaryPaths =
-    clientEngineType === ClientEngineType.Library
-      ? {
-          libqueryEngine: {
-            [binaryTarget]: queryEngineLibraryPath,
-          },
-        }
-      : {
-          queryEngine: {
-            [binaryTarget]: queryEngineBinaryPath,
-          },
-        }
-
   // TODO: use engine.getDmmf()
-  const dmmf = await getDMMF({
-    datamodel: schemas,
-    previewFeatures,
-  })
+  const dmmf = await getDMMF({ datamodel: schemas })
 
   const schema = mergeSchemas({ schemas })
 
   await generateClient({
-    binaryPaths,
+    binaryPaths: {},
     datamodel: schema,
     dmmf,
     ...config,
@@ -122,10 +71,12 @@ export async function generateInFolder({
     schemaPath,
     testMode: true,
     copyRuntime: false,
+    runtimeSourcePath: path.join(__dirname, '../../runtime'),
     generator: config.generators[0],
     clientVersion: 'local',
     engineVersion: 'local',
     activeProvider: config.datasources[0].activeProvider,
+    compilerBuild: 'fast',
   })
 
   const time = performance.now() - before

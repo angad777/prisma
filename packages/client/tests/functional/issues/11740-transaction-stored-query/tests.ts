@@ -1,6 +1,7 @@
+import { AdapterProviders } from '../../_utils/providers'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { PrismaClient } from './node_modules/@prisma/client'
+import type { PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -9,8 +10,8 @@ declare let prisma: PrismaClient
  * Stored queries in variables for batched tx
  */
 testMatrix.setupTestSuite(
-  ({ engineType }) => {
-    testIf(engineType !== 'binary')('stored query triggered twice should fail but not exit process', async () => {
+  () => {
+    test('stored query triggered twice should fail but not exit process', async () => {
       const query = prisma.resource.create({
         data: {
           email: 'john@prisma.io',
@@ -22,7 +23,7 @@ testMatrix.setupTestSuite(
       await expect(result).rejects.toMatchPrismaErrorSnapshot()
     })
 
-    testIf(engineType !== 'binary')('stored query trigger .requestTransaction twice should fail', async () => {
+    test('stored query trigger .requestTransaction twice should fail', async () => {
       const query = prisma.resource.create({
         data: {
           email: 'john@prisma.io',
@@ -37,7 +38,7 @@ testMatrix.setupTestSuite(
       await expect(fn()).rejects.toMatchPrismaErrorSnapshot()
     })
 
-    testIf(engineType !== 'binary')('no multiple resolves should happen', async () => {
+    test('no multiple resolves should happen', async () => {
       const mockMultipleResolve = jest.fn()
 
       process.on('multipleResolves', mockMultipleResolve)
@@ -52,9 +53,9 @@ testMatrix.setupTestSuite(
     })
   },
   {
-    skipDataProxy: {
-      runtimes: ['edge'],
-      reason: 'Skipped because of the error snapshots on edge client',
+    skipDriverAdapter: {
+      from: [AdapterProviders.JS_LIBSQL],
+      reason: 'js_libsql: SIGABRT due to panic in libsql (not yet implemented: unsupported type)', // TODO: ORM-867
     },
   },
 )

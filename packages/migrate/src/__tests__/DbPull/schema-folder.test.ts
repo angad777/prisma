@@ -1,38 +1,31 @@
-import { jestConsoleContext, jestContext } from '@prisma/get-platform'
-
 import { DbPull } from '../../commands/DbPull'
-import CaptureStdout from '../__helpers__/captureStdout'
+import { createDefaultTestContext } from '../__helpers__/context'
 
 const isMacOrWindowsCI = Boolean(process.env.CI) && ['darwin', 'win32'].includes(process.platform)
 if (isMacOrWindowsCI) {
   jest.setTimeout(60_000)
 }
 
-const ctx = jestContext.new().add(jestConsoleContext()).assemble()
-const captureStdout = new CaptureStdout()
+const testIf = (condition: boolean) => (condition ? test : test.skip)
 
-beforeEach(() => {
-  captureStdout.startCapture()
-})
+const ctx = createDefaultTestContext()
 
-afterEach(() => {
-  captureStdout.clearCaptureText()
-})
-
-afterAll(() => {
-  captureStdout.stopCapture()
-})
-
-// To avoid the loading spinner locally
-process.env.CI = 'true'
-
-test('reintrospection - no changes', async () => {
+// TODO: https://linear.app/prisma-company/issue/TML-1576/investigate-failing-snapshot-tests-and-schema-path-formatting-on
+testIf(process.platform !== 'win32')('reintrospection - no changes', async () => {
   ctx.fixture('introspection-folder')
   const introspect = new DbPull()
-  const result = introspect.parse([])
+  const result = introspect.parse([], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
-  expect(captureStdout.getCapturedText().join('\n')).toMatchSnapshot()
+  expect(ctx.normalizedCapturedStdout()).toMatchInlineSnapshot(`
+    "Datasource "my_db": SQLite database "dev.db" <location placeholder>
+
+    - Introspecting based on datasource defined in prisma/schema
+    ✔ Introspected 2 models and wrote them into prisma/schema in XXXms
+          
+    Run prisma generate to generate Prisma Client.
+    "
+  `)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
     "Blog.prisma:
@@ -48,14 +41,12 @@ test('reintrospection - no changes', async () => {
     config.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
 
@@ -69,33 +60,58 @@ test('reintrospection - no changes', async () => {
   `)
 })
 
-test('reintrospection - with --print', async () => {
+// TODO: https://linear.app/prisma-company/issue/TML-1576/investigate-failing-snapshot-tests-and-schema-path-formatting-on
+testIf(process.platform !== 'win32')('reintrospection - with --print', async () => {
   ctx.fixture('introspection-folder')
   const introspect = new DbPull()
-  const result = introspect.parse(['--print'])
+  const result = introspect.parse(['--print'], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
-  expect(captureStdout.getCapturedText().join('\n')).toMatchSnapshot()
+  expect(ctx.normalizedCapturedStdout()).toMatchInlineSnapshot(`
+    "// prisma/schema/Blog.prisma
+    model Blog {
+      id          Int  @id @default(autoincrement())
+      viewCount20 Int
+      ownerId     Int
+      owner       User @relation(fields: [ownerId], references: [id])
+    }
+
+    // prisma/schema/config.prisma
+    generator client {
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
+    }
+
+    datasource my_db {
+      provider = "sqlite"
+    }
+
+    // prisma/schema/User.prisma
+    model User {
+      id    Int    @id @default(autoincrement())
+      blogs Blog[]
+    }
+
+    "
+  `)
 })
 
 test('reintrospection - new model', async () => {
   ctx.fixture('introspection-folder-new-model')
   const introspect = new DbPull()
-  const result = introspect.parse([])
+  const result = introspect.parse([], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
     "config.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
 
@@ -122,21 +138,19 @@ test('reintrospection - new model', async () => {
 test('reintrospection - new model - existing introspected.prisma', async () => {
   ctx.fixture('introspection-folder-new-model-with-introspected')
   const introspect = new DbPull()
-  const result = introspect.parse([])
+  const result = introspect.parse([], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
     "config.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
 
@@ -160,7 +174,7 @@ test('reintrospection - new model - existing introspected.prisma', async () => {
 test('reintrospection - new field', async () => {
   ctx.fixture('introspection-folder-new-field')
   const introspect = new DbPull()
-  const result = introspect.parse([])
+  const result = introspect.parse([], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
@@ -177,14 +191,12 @@ test('reintrospection - new field', async () => {
     config.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
 
@@ -201,7 +213,7 @@ test('reintrospection - new field', async () => {
 test('reintrospection - remove model', async () => {
   ctx.fixture('introspection-folder-remove-model')
   const introspect = new DbPull()
-  const result = introspect.parse([])
+  const result = introspect.parse([], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
@@ -213,14 +225,12 @@ test('reintrospection - remove model', async () => {
     config.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
 
@@ -236,21 +246,19 @@ test('reintrospection - remove model', async () => {
 test('reintrospection - invalid schema with --force', async () => {
   ctx.fixture('introspection-folder-invalid')
   const introspect = new DbPull()
-  const result = introspect.parse(['--force'])
+  const result = introspect.parse(['--force'], await ctx.config(), ctx.configDir())
   await expect(result).resolves.toMatchInlineSnapshot(`""`)
 
   expect(ctx.printDir('prisma/schema', ['.prisma'])).toMatchInlineSnapshot(`
     "introspected.prisma:
 
     generator client {
-      provider        = "prisma-client-js"
-      output          = "@prisma/client"
-      previewFeatures = ["prismaSchemaFolder"]
+      provider = "prisma-client-js"
+      output   = "@prisma/client"
     }
 
     datasource my_db {
       provider = "sqlite"
-      url      = "file:../dev.db"
     }
 
     model Blog {

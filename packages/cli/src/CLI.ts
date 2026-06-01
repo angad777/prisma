@@ -1,25 +1,39 @@
-import { ensureBinariesExist } from '@prisma/engines'
+import type { PrismaConfigInternal } from '@prisma/config'
+import { ensureNeededBinariesExist } from '@prisma/engines'
+import type { BinaryPaths, DownloadOptions } from '@prisma/fetch-engine'
 import type { Command, Commands } from '@prisma/internals'
-import { arg, drawBox, format, HelpError, isError, link, logger, unknownCommand } from '@prisma/internals'
-import { bold, dim, green, red, underline } from 'kleur/colors'
+import { arg, drawBox, format, HelpError, isError, link, unknownCommand } from '@prisma/internals'
+import { bold, dim, green, red } from 'kleur/colors'
 
+import { runCheckpointClientCheck } from './utils/checkpoint'
+import { printUpdateMessage } from './utils/printUpdateMessage'
 import { Version } from './Version'
 
 /**
  * CLI command
  */
 export class CLI implements Command {
-  static new(cmds: Commands, ensureBinaries: string[]): CLI {
-    return new CLI(cmds, ensureBinaries)
+  static new(
+    cmds: Commands,
+    ensureBinaries: string[],
+    download: (options: DownloadOptions) => Promise<BinaryPaths>,
+  ): CLI {
+    return new CLI(cmds, ensureBinaries, download)
   }
-  private constructor(private readonly cmds: Commands, private readonly ensureBinaries: string[]) {}
 
-  async parse(argv: string[]): Promise<string | Error> {
+  private constructor(
+    private readonly cmds: Commands,
+    private readonly ensureBinaries: string[],
+    private readonly download: (options: DownloadOptions) => Promise<BinaryPaths>,
+  ) {}
+
+  async parse(argv: string[], config: PrismaConfigInternal, baseDir: string = process.cwd()): Promise<string | Error> {
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--version': Boolean,
       '-v': '--version',
+      '--config': String,
       '--json': Boolean, // for -v
       '--experimental': Boolean,
       '--preview-feature': Boolean,
@@ -31,14 +45,16 @@ export class CLI implements Command {
       return this.help(args.message)
     }
 
-    if (args['--version']) {
-      await ensureBinariesExist()
-      return Version.new().parse(argv)
+    // display help for help flag or no subcommand
+    if (!args['--version'] && (args._.length === 0 || args['--help'])) {
+      return this.help()
     }
 
-    // display help for help flag or no subcommand
-    if (args._.length === 0 || args['--help']) {
-      return this.help()
+    if (args['--version']) {
+      await ensureNeededBinariesExist({
+        download: this.download,
+      })
+      return Version.new().parse(argv, config, baseDir)
     }
 
     // check if we have that subcommand
@@ -47,22 +63,21 @@ export class CLI implements Command {
     if (cmdName === 'lift') {
       throw new Error(`${red('prisma lift')} has been renamed to ${green('prisma migrate')}`)
     }
-    // warn if "introspect"
-    else if (cmdName === 'introspect') {
-      logger.warn('')
-      logger.warn(
-        `${bold(
-          `The ${underline('prisma introspect')} command is deprecated. Please use ${green('prisma db pull')} instead.`,
-        )}`,
-      )
-      logger.warn('')
-    }
 
     const cmd = this.cmds[cmdName]
     if (cmd) {
+      // Only track if the command actually exists
+      const checkResultPromise = runCheckpointClientCheck({ schemaPathFromConfig: config.schema, baseDir }).catch(
+        () => {
+          /* noop */
+        },
+      )
+
       // if we have that subcommand, let's ensure that the binary is there in case the command needs it
       if (this.ensureBinaries.includes(cmdName)) {
-        await ensureBinariesExist()
+        await ensureNeededBinariesExist({
+          download: this.download,
+        })
       }
 
       let argsForCmd: string[]
@@ -76,7 +91,11 @@ export class CLI implements Command {
         argsForCmd = args._.slice(1)
       }
 
-      return cmd.parse(argsForCmd)
+      const result = await cmd.parse(argsForCmd, config, baseDir)
+
+      printUpdateMessage(await checkResultPromise)
+
+      return result
     }
     // unknown command
     return unknownCommand(this.help() as string, args._[0])
@@ -89,8 +108,7 @@ export class CLI implements Command {
     return CLI.help
   }
 
-  private static tryPdpMessage = `Optimize performance through connection pooling and caching with Prisma Accelerate
-and capture real-time events from your database with Prisma Pulse.
+  private static tryPdpMessage = `Optimize performance through connection pooling and caching with Prisma Accelerate.
 Learn more at ${link('https://pris.ly/cli/pdp')}`
 
   private static boxedTryPdpMessage = drawBox({
@@ -112,6 +130,8 @@ Learn more at ${link('https://pris.ly/cli/pdp')}`
     ${bold('Commands')}
 
                 init   Set up Prisma for your app
+           bootstrap   Bootstrap a Prisma Postgres project
+                 dev   Start a local Prisma Postgres server for development
             generate   Generate artifacts (e.g. Prisma Client)
                   db   Manage your database schema and lifecycle
              migrate   Migrate your database
@@ -120,6 +140,9 @@ Learn more at ${link('https://pris.ly/cli/pdp')}`
               format   Format your Prisma schema
              version   Displays Prisma version info
                debug   Displays Prisma debug info
+            platform   Prisma Data Platform commands
+            postgres   Manage Prisma Postgres databases
+                 mcp   Starts an MCP server to use with AI development tools
 
     ${bold('Flags')}
 
@@ -130,8 +153,11 @@ ${this.boxedTryPdpMessage}
 
     ${bold('Examples')}
 
-      Set up a new Prisma project
+      Set up a new local Prisma Postgres \`prisma dev\`-ready project
       ${dim('$')} prisma init
+
+      Start a local Prisma Postgres server for development
+      ${dim('$')} prisma dev
 
       Generate artifacts (e.g. Prisma Client)
       ${dim('$')} prisma generate

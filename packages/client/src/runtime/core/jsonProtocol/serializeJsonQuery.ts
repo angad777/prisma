@@ -1,6 +1,7 @@
+import { RuntimeDataModel, RuntimeModel, uncapitalize } from '@prisma/client-common'
+import { isObjectEnumValue } from '@prisma/client-runtime-utils'
 import { assertNever } from '@prisma/internals'
 
-import { lowerCase } from '../../../utils/lowerCase'
 import { ErrorFormat } from '../../getPrismaClient'
 import { CallSite } from '../../utils/CallSite'
 import { isDate, isValidDate } from '../../utils/date'
@@ -19,7 +20,6 @@ import { MergedExtensionsList } from '../extensions/MergedExtensionsList'
 import { computeEngineSideOmissions, computeEngineSideSelection } from '../extensions/resultUtils'
 import { isFieldRef } from '../model/FieldRef'
 import { isParam } from '../model/Param'
-import { RuntimeDataModel, RuntimeModel } from '../runtimeDataModel'
 import { isSkip, Skip } from '../types'
 import {
   Action,
@@ -30,7 +30,6 @@ import {
   RawParameters,
   Selection,
 } from '../types/exported/JsApi'
-import { ObjectEnumValue, objectEnumValues } from '../types/exported/ObjectEnums'
 import { ValidationError } from '../types/ValidationError'
 
 const jsActionToProtocolAction: Record<Action, JsonQueryAction> = {
@@ -76,6 +75,7 @@ export type SerializeParams = {
   errorFormat: ErrorFormat
   previewFeatures: string[]
   globalOmit?: GlobalOmitOptions
+  wrapRawValues?: boolean
 }
 
 const STRICT_UNDEFINED_ERROR_MESSAGE = 'explicitly `undefined` values are not allowed'
@@ -92,6 +92,7 @@ export function serializeJsonQuery({
   clientVersion,
   previewFeatures,
   globalOmit,
+  wrapRawValues,
 }: SerializeParams): JsonQuery {
   const context = new SerializeContext({
     runtimeDataModel,
@@ -107,6 +108,7 @@ export function serializeJsonQuery({
     clientVersion,
     previewFeatures,
     globalOmit,
+    wrapRawValues,
   })
   return {
     modelName,
@@ -310,6 +312,7 @@ function serializeArgumentsValue(
 
   if (ArrayBuffer.isView(jsValue)) {
     const { buffer, byteOffset, byteLength } = jsValue
+    // TODO(perf): get rid of this conversion
     return { $type: 'Bytes', value: Buffer.from(buffer, byteOffset, byteLength).toString('base64') }
   }
 
@@ -321,11 +324,12 @@ function serializeArgumentsValue(
     return { $type: 'Decimal', value: jsValue.toFixed() }
   }
 
-  if (jsValue instanceof ObjectEnumValue) {
-    if (jsValue !== objectEnumValues.instances[jsValue._getName()]) {
-      throw new Error('Invalid ObjectEnumValue')
+  if (isObjectEnumValue(jsValue)) {
+    const name = jsValue._getName()
+    if (name !== 'DbNull' && name !== 'JsonNull' && name !== 'AnyNull') {
+      throw new Error(`Invalid ObjectEnumValue: expected DbNull, JsonNull, or AnyNull, got ${name}`)
     }
-    return { $type: 'Enum', value: jsValue._getName() }
+    return { $type: 'Enum', value: name }
   }
 
   if (isJSONConvertible(jsValue)) {
@@ -354,8 +358,10 @@ function serializeArgumentsObject(
   object: Record<string, JsInputValue>,
   context: SerializeContext,
 ): Record<string, JsonArgumentValue> | RawTaggedValue {
-  if (object['$type']) {
-    return { $type: 'Raw', value: object }
+  if (context.shouldWrapRawValues()) {
+    if (object['$type']) {
+      return { $type: 'Raw', value: object }
+    }
   }
   const result: Record<string, JsonArgumentValue> = {}
   for (const key in object) {
@@ -434,6 +440,7 @@ type ContextParams = {
   clientVersion: string
   previewFeatures: string[]
   globalOmit?: GlobalOmitOptions
+  wrapRawValues?: boolean
 }
 
 class SerializeContext {
@@ -493,6 +500,10 @@ class SerializeContext {
     return this.params.previewFeatures.includes(previewFeature)
   }
 
+  shouldWrapRawValues(): boolean {
+    return this.params.wrapRawValues ?? true
+  }
+
   getComputedFields() {
     if (!this.params.modelName) {
       return undefined
@@ -518,7 +529,7 @@ class SerializeContext {
 
   getGlobalOmit(): Record<string, boolean> {
     if (this.params.modelName && this.shouldApplyGlobalOmit()) {
-      return this.params.globalOmit?.[lowerCase(this.params.modelName)] ?? {}
+      return this.params.globalOmit?.[uncapitalize(this.params.modelName)] ?? {}
     }
     return {}
   }

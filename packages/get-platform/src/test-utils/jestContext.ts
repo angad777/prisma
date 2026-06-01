@@ -1,9 +1,12 @@
-import type { ExecaChildProcess } from 'execa'
-import execa from 'execa'
+import path from 'node:path'
+
+import { type ExecaChildProcess, execaNode } from 'execa'
 import fs from 'fs-jetpack'
 import type { FSJetpack, InspectTreeResult } from 'fs-jetpack/types'
-import path from 'path'
 import tempy from 'tempy'
+
+// `globalThis.jest` is not available even in Jest, it's probably injected via an IIFE wrapper and not globalThis
+const test: typeof jest = typeof jest !== 'undefined' ? jest : globalThis.vi
 
 /**
  * Base test context.
@@ -52,6 +55,10 @@ export const jestContext = {
     beforeEach(() => {
       const originalCwd = process.cwd()
 
+      c.mocked = c.mocked ?? {
+        cwd: process.cwd(),
+      }
+
       c.tmpDir = tempy.directory()
       c.fs = fs.cwd(c.tmpDir)
       c.tree = (startFrom = c.tmpDir, indent = '') => {
@@ -86,12 +93,11 @@ ${[...generateDirectoryTree(children, indent)].join('\n')}
         })
         // symlink to local client version in tmp dir
         c.fs.symlink(path.join(originalCwd, '..', 'client'), path.join(c.fs.cwd(), 'node_modules', '@prisma', 'client'))
+        c.fs.symlink(path.join(originalCwd, '..', 'config'), path.join(c.fs.cwd(), 'node_modules', '@prisma', 'config'))
       }
-      c.mocked = c.mocked ?? {
-        cwd: process.cwd(),
-      }
+
       c.cli = (...input) => {
-        return execa.node(path.join(originalCwd, '../cli/build/index.js'), input, {
+        return execaNode(path.join(originalCwd, '../cli/build/index.js'), input, {
           cwd: c.fs.cwd(),
           stdio: 'pipe',
           all: true,
@@ -115,13 +121,6 @@ ${[...generateDirectoryTree(children, indent)].join('\n')}
     return factory(ctx)
   },
 }
-
-/**
- * Factory for creating a context contributor possibly configured in some special way.
- */
-type ContextContributorFactory<Settings, Context, NewContext> = Settings extends {}
-  ? () => ContextContributor<Context, NewContext>
-  : (settings: Settings) => ContextContributor<Context, NewContext>
 
 /**
  * A function that provides additional test context.
@@ -157,25 +156,27 @@ type ConsoleContext = {
   }
 }
 
-export const jestConsoleContext: ContextContributorFactory<{}, BaseContext, ConsoleContext> = () => (c) => {
-  const ctx = c as BaseContext & ConsoleContext
+export const jestConsoleContext =
+  <Ctx extends BaseContext>() =>
+  (c: Ctx) => {
+    const ctx = c as Ctx & ConsoleContext
 
-  beforeEach(() => {
-    ctx.mocked['console.error'] = jest.spyOn(console, 'error').mockImplementation(() => {})
-    ctx.mocked['console.log'] = jest.spyOn(console, 'log').mockImplementation(() => {})
-    ctx.mocked['console.info'] = jest.spyOn(console, 'info').mockImplementation(() => {})
-    ctx.mocked['console.warn'] = jest.spyOn(console, 'warn').mockImplementation(() => {})
-  })
+    beforeEach(() => {
+      ctx.mocked['console.error'] = test.spyOn(console, 'error').mockImplementation(() => {})
+      ctx.mocked['console.log'] = test.spyOn(console, 'log').mockImplementation(() => {})
+      ctx.mocked['console.info'] = test.spyOn(console, 'info').mockImplementation(() => {})
+      ctx.mocked['console.warn'] = test.spyOn(console, 'warn').mockImplementation(() => {})
+    })
 
-  afterEach(() => {
-    ctx.mocked['console.error'].mockRestore()
-    ctx.mocked['console.log'].mockRestore()
-    ctx.mocked['console.info'].mockRestore()
-    ctx.mocked['console.warn'].mockRestore()
-  })
+    afterEach(() => {
+      ctx.mocked['console.error'].mockRestore()
+      ctx.mocked['console.log'].mockRestore()
+      ctx.mocked['console.info'].mockRestore()
+      ctx.mocked['console.warn'].mockRestore()
+    })
 
-  return ctx
-}
+    return ctx
+  }
 
 /**
  * Test context contributor. Mocks process.std(out|err).write with a Jest spy before each test.
@@ -186,20 +187,75 @@ type ProcessContext = {
     'process.stderr.write': jest.SpyInstance
     'process.stdout.write': jest.SpyInstance
   }
+  normalizedCapturedStdout: () => string
+  normalizedCapturedStderr: () => string
+  clearCapturedStdout: () => void
+  clearCapturedStderr: () => void
 }
 
-export const jestProcessContext: ContextContributorFactory<{}, BaseContext, ProcessContext> = () => (c) => {
-  const ctx = c as BaseContext & ProcessContext
+type NormalizationRule = [RegExp | string, string]
 
-  beforeEach(() => {
-    ctx.mocked['process.stderr.write'] = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
-    ctx.mocked['process.stdout.write'] = jest.spyOn(process.stdout, 'write').mockImplementation(() => true)
-  })
-
-  afterEach(() => {
-    ctx.mocked['process.stderr.write'].mockRestore()
-    ctx.mocked['process.stdout.write'].mockRestore()
-  })
-
-  return ctx
+export type ProcessContextSettings = {
+  normalizationRules: NormalizationRule[]
 }
+
+export const jestStdoutContext =
+  <Ctx extends BaseContext>({ normalizationRules }: ProcessContextSettings = { normalizationRules: [] }) =>
+  (c: Ctx) => {
+    const ctx = c as Ctx & ProcessContext
+
+    const normalize = (text: string, rules: NormalizationRule[]) => {
+      for (const [pattern, replacement] of rules) {
+        text = text.replace(pattern, replacement)
+      }
+      return text
+    }
+
+    beforeEach(() => {
+      ctx.mocked['process.stderr.write'] = test.spyOn(process.stderr, 'write').mockImplementation(() => true)
+      ctx.mocked['process.stdout.write'] = test.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      ctx.normalizedCapturedStdout = () =>
+        normalize(ctx.mocked['process.stdout.write'].mock.calls.join(''), normalizationRules)
+      ctx.normalizedCapturedStderr = () =>
+        normalize(ctx.mocked['process.stderr.write'].mock.calls.join(''), normalizationRules)
+      ctx.clearCapturedStdout = () => ctx.mocked['process.stdout.write'].mockClear()
+      ctx.clearCapturedStderr = () => ctx.mocked['process.stderr.write'].mockClear()
+    })
+
+    afterEach(() => {
+      ctx.mocked['process.stderr.write'].mockRestore()
+      ctx.mocked['process.stdout.write'].mockRestore()
+    })
+
+    return ctx
+  }
+
+/**
+ * Test context contributor. Mocks process.exit with a spay and records the exit code.
+ */
+
+type ProcessExitContext = {
+  mocked: {
+    'process.exit': jest.SpyInstance
+  }
+  recordedExitCode: () => number
+}
+
+export const processExitContext =
+  <C extends BaseContext>() =>
+  (c: C) => {
+    const ctx = c as C & ProcessExitContext
+
+    beforeEach(() => {
+      ctx.mocked['process.exit'] = test.spyOn(process, 'exit').mockImplementation((number) => {
+        throw new Error('process.exit: ' + number)
+      })
+      ctx.recordedExitCode = () => ctx.mocked['process.exit'].mock.calls[0]?.[0]
+    })
+
+    afterEach(() => {
+      ctx.mocked['process.exit'].mockRestore()
+    })
+
+    return ctx
+  }

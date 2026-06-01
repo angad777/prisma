@@ -1,10 +1,23 @@
+import type { PrismaConfigInternal } from '@prisma/config'
 import Debug from '@prisma/debug'
-import { arg, checkUnsupportedDataProxy, Command, format, HelpError, isError, loadEnvFile } from '@prisma/internals'
-import { bold, dim, green, red } from 'kleur/colors'
+import {
+  arg,
+  checkUnsupportedDataProxy,
+  Command,
+  createSchemaPathInput,
+  format,
+  getSchemaDatasourceProvider,
+  HelpError,
+  inferDirectoryConfig,
+  isError,
+  loadSchemaContext,
+  MigrateTypes,
+  validatePrismaConfigWithDatasource,
+} from '@prisma/internals'
+import { bold, dim, green, italic, red } from 'kleur/colors'
 
 import { Migrate } from '../Migrate'
-import { ensureDatabaseExists, getDatasourceInfo } from '../utils/ensureDatabaseExists'
-import { getSchemaPathAndPrint } from '../utils/getSchemaPathAndPrint'
+import { ensureDatabaseExists, parseDatasourceInfo } from '../utils/ensureDatabaseExists'
 import { printDatasource } from '../utils/printDatasource'
 import { printFilesFromMigrationIds } from '../utils/printFiles'
 
@@ -22,9 +35,12 @@ ${bold('Usage')}
 
   ${dim('$')} prisma migrate deploy [options]
 
+  The datasource URL configuration is read from the Prisma config file (e.g., ${italic('prisma.config.ts')}).
+
 ${bold('Options')}
 
   -h, --help   Display this help message
+    --config   Custom path to your Prisma config file
     --schema   Custom path to your Prisma schema
 
 ${bold('Examples')}
@@ -37,13 +53,14 @@ ${bold('Examples')}
 
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal, baseDir: string): Promise<string | Error> {
     const args = arg(
       argv,
       {
         '--help': Boolean,
         '-h': '--help',
         '--schema': String,
+        '--config': String,
         '--telemetry-information': String,
       },
       false,
@@ -53,29 +70,52 @@ ${bold('Examples')}
       return this.help(args.message)
     }
 
-    await checkUnsupportedDataProxy('migrate deploy', args, true)
-
     if (args['--help']) {
       return this.help()
     }
 
-    await loadEnvFile({ schemaPath: args['--schema'], printMessage: true })
+    const schemaContext = await loadSchemaContext({
+      schemaPath: createSchemaPathInput({
+        schemaPathFromArgs: args['--schema'],
+        schemaPathFromConfig: config.schema,
+        baseDir,
+      }),
+    })
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext, config)
 
-    const { schemaPath } = (await getSchemaPathAndPrint(args['--schema']))!
+    const cmd = 'migrate deploy'
+    const validatedConfig = validatePrismaConfigWithDatasource({ config, cmd })
 
-    printDatasource({ datasourceInfo: await getDatasourceInfo({ schemaPath }) })
+    checkUnsupportedDataProxy({ cmd, validatedConfig })
 
-    const migrate = new Migrate(schemaPath)
+    printDatasource({ datasourceInfo: parseDatasourceInfo(schemaContext.primaryDatasource, validatedConfig) })
+
+    const schemaFilter: MigrateTypes.SchemaFilter = {
+      externalTables: config.tables?.external ?? [],
+      externalEnums: config.enums?.external ?? [],
+    }
+
+    const migrate = await Migrate.setup({
+      schemaEngineConfig: config,
+      baseDir,
+      migrationsDirPath,
+      schemaContext,
+      schemaFilter,
+      extensions: config['extensions'],
+    })
 
     try {
       // Automatically create the database if it doesn't exist
-      const wasDbCreated = await ensureDatabaseExists('apply', schemaPath)
-      if (wasDbCreated) {
-        process.stdout.write('\n' + wasDbCreated + '\n')
+      const successMessage = await ensureDatabaseExists(
+        baseDir,
+        getSchemaDatasourceProvider(schemaContext),
+        validatedConfig,
+      )
+      if (successMessage) {
+        process.stdout.write('\n' + successMessage + '\n')
       }
     } catch (e) {
       process.stdout.write('\n') // empty line
-
       throw e
     }
 
@@ -99,7 +139,7 @@ ${bold('Examples')}
       migrationIds = appliedMigrationNames
     } finally {
       // Stop engine
-      migrate.stop()
+      await migrate.stop()
     }
 
     process.stdout.write('\n') // empty line
@@ -113,7 +153,7 @@ ${bold('Examples')}
           'migration.sql': '',
         },
       )}
-      
+
 ${green('All migrations have been successfully applied.')}`
     }
   }

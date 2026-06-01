@@ -1,24 +1,29 @@
+import type { PrismaConfigInternal } from '@prisma/config'
 import {
   arg,
   canPrompt,
   checkUnsupportedDataProxy,
   Command,
+  createSchemaPathInput,
   format,
   formatms,
   getCommandWithExecutor,
+  getSchemaDatasourceProvider,
   HelpError,
+  inferDirectoryConfig,
   isError,
-  loadEnvFile,
-  protocolToConnectorType,
+  loadSchemaContext,
+  MigrateTypes,
+  validatePrismaConfigWithDatasource,
 } from '@prisma/internals'
-import { bold, dim, green, red, yellow } from 'kleur/colors'
+import { bold, dim, green, italic, red, yellow } from 'kleur/colors'
 import prompt from 'prompts'
 
 import { Migrate } from '../Migrate'
 import type { EngineResults } from '../types'
-import { ensureDatabaseExists, getDatasourceInfo } from '../utils/ensureDatabaseExists'
+import { aiAgentConfirmationCheckpoint } from '../utils/ai-safety'
+import { ensureDatabaseExists, parseDatasourceInfo } from '../utils/ensureDatabaseExists'
 import { DbPushIgnoreWarningsWithFlagError } from '../utils/errors'
-import { getSchemaPathAndPrint } from '../utils/getSchemaPathAndPrint'
 import { printDatasource } from '../utils/printDatasource'
 
 export class DbPush implements Command {
@@ -33,13 +38,16 @@ ${bold('Usage')}
 
   ${dim('$')} prisma db push [options]
 
+  The datasource URL configuration is read from the Prisma config file (e.g., ${italic('prisma.config.ts')}).
+
 ${bold('Options')}
 
            -h, --help   Display this help message
+             --config   Custom path to your Prisma config file
              --schema   Custom path to your Prisma schema
+                 --url   Override the datasource URL from the Prisma config file
    --accept-data-loss   Ignore data loss warnings
-        --force-reset   Force a reset of the database before push 
-      --skip-generate   Skip triggering generators (e.g. Prisma Client)
+        --force-reset   Force a reset of the database before push
 
 ${bold('Examples')}
 
@@ -53,7 +61,7 @@ ${bold('Examples')}
   ${dim('$')} prisma db push --accept-data-loss
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal, baseDir: string): Promise<string | Error> {
     const args = arg(
       argv,
       {
@@ -61,8 +69,9 @@ ${bold('Examples')}
         '-h': '--help',
         '--accept-data-loss': Boolean,
         '--force-reset': Boolean,
-        '--skip-generate': Boolean,
         '--schema': String,
+        '--config': String,
+        '--url': String,
         '--telemetry-information': String,
       },
       false,
@@ -72,26 +81,61 @@ ${bold('Examples')}
       return this.help(args.message)
     }
 
-    await checkUnsupportedDataProxy('db push', args, true)
-
     if (args['--help']) {
       return this.help()
     }
 
-    await loadEnvFile({ schemaPath: args['--schema'], printMessage: true })
+    const schemaContext = await loadSchemaContext({
+      schemaPath: createSchemaPathInput({
+        schemaPathFromArgs: args['--schema'],
+        schemaPathFromConfig: config.schema,
+        baseDir,
+      }),
+    })
 
-    const { schemaPath } = await getSchemaPathAndPrint(args['--schema'])
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext, config)
 
-    const datasourceInfo = await getDatasourceInfo({ schemaPath })
+    let cmdSpecificConfig = config
+    if (args['--url']) {
+      cmdSpecificConfig = {
+        ...cmdSpecificConfig,
+        datasource: {
+          ...cmdSpecificConfig.datasource,
+          url: args['--url'],
+        },
+      }
+    }
+
+    const cmd = 'db push'
+    const validatedConfig = validatePrismaConfigWithDatasource({ config: cmdSpecificConfig, cmd })
+
+    checkUnsupportedDataProxy({ cmd, validatedConfig })
+
+    const datasourceInfo = parseDatasourceInfo(schemaContext.primaryDatasource, validatedConfig)
     printDatasource({ datasourceInfo })
+    const schemaFilter: MigrateTypes.SchemaFilter = {
+      externalTables: cmdSpecificConfig.tables?.external ?? [],
+      externalEnums: cmdSpecificConfig.enums?.external ?? [],
+    }
 
-    const migrate = new Migrate(schemaPath)
+    const migrate = await Migrate.setup({
+      schemaEngineConfig: cmdSpecificConfig,
+      baseDir,
+      migrationsDirPath,
+      schemaContext,
+      schemaFilter,
+      extensions: cmdSpecificConfig['extensions'],
+    })
 
     try {
       // Automatically create the database if it doesn't exist
-      const wasDbCreated = await ensureDatabaseExists('push', schemaPath)
-      if (wasDbCreated) {
-        process.stdout.write('\n' + wasDbCreated + '\n')
+      const successMessage = await ensureDatabaseExists(
+        baseDir,
+        getSchemaDatasourceProvider(schemaContext),
+        validatedConfig,
+      )
+      if (successMessage) {
+        process.stdout.write('\n' + successMessage + '\n')
       }
     } catch (e) {
       process.stdout.write('\n') // empty line
@@ -102,10 +146,12 @@ ${bold('Examples')}
     if (args['--force-reset']) {
       process.stdout.write('\n')
 
+      aiAgentConfirmationCheckpoint()
+
       try {
         await migrate.reset()
       } catch (e) {
-        migrate.stop()
+        await migrate.stop()
         throw e
       }
 
@@ -141,7 +187,7 @@ ${bold('Examples')}
         force: args['--accept-data-loss'],
       })
     } catch (e) {
-      migrate.stop()
+      await migrate.stop()
       throw e
     }
 
@@ -153,52 +199,13 @@ ${bold('Examples')}
       }
       process.stdout.write('\n') // empty line
 
-      if (!canPrompt()) {
-        migrate.stop()
-        throw new Error(`${messages.join('\n')}\n
-Use the --force-reset flag to drop the database before push like ${bold(
-          green(getCommandWithExecutor('prisma db push --force-reset')),
-        )}
+      await migrate.stop()
+      throw new Error(`${messages.join('\n')}\n
+You may use the --force-reset flag to drop the database before push like ${bold(
+        green(getCommandWithExecutor('prisma db push --force-reset')),
+      )}
 ${bold(red('All data will be lost.'))}
-        `)
-      } else {
-        process.stdout.write(`${messages.join('\n')}\n\n`)
-      }
-
-      process.stdout.write('\n') // empty line
-      const confirmation = await prompt({
-        type: 'confirm',
-        name: 'value',
-        message: `To apply this change we need to reset the database, do you want to continue? ${red(
-          'All data will be lost',
-        )}.`,
-      })
-
-      if (!confirmation.value) {
-        process.stdout.write('Reset cancelled.\n')
-        migrate.stop()
-        // Return SIGINT exit code to signal that the process was cancelled.
-        process.exit(130)
-      }
-
-      try {
-        // Reset first to remove all structure and data
-        await migrate.reset()
-        if (datasourceInfo.dbName && datasourceInfo.dbLocation) {
-          process.stdout.write(
-            `The ${datasourceInfo.prettyProvider} database "${datasourceInfo.dbName}" from "${datasourceInfo.dbLocation}" was successfully reset.\n`,
-          )
-        } else {
-          process.stdout.write(`The ${datasourceInfo.prettyProvider} database was successfully reset.\n`)
-        }
-        wasDatabaseReset = true
-
-        // And now we can db push
-        await migrate.push({})
-      } catch (e) {
-        migrate.stop()
-        throw e
-      }
+      `)
     }
 
     if (migration.warnings && migration.warnings.length > 0) {
@@ -211,7 +218,7 @@ ${bold(red('All data will be lost.'))}
 
       if (!args['--accept-data-loss']) {
         if (!canPrompt()) {
-          migrate.stop()
+          await migrate.stop()
           throw new DbPushIgnoreWarningsWithFlagError()
         }
 
@@ -224,7 +231,7 @@ ${bold(red('All data will be lost.'))}
 
         if (!confirmation.value) {
           process.stdout.write('Push cancelled.\n')
-          migrate.stop()
+          await migrate.stop()
           // Return SIGINT exit code to signal that the process was cancelled.
           process.exit(130)
         }
@@ -234,13 +241,13 @@ ${bold(red('All data will be lost.'))}
             force: true,
           })
         } catch (e) {
-          migrate.stop()
+          await migrate.stop()
           throw e
         }
       }
     }
 
-    migrate.stop()
+    await migrate.stop()
 
     if (!wasDatabaseReset && migration.warnings.length === 0 && migration.executedSteps === 0) {
       process.stdout.write(`\nThe database is already in sync with the Prisma schema.\n`)
@@ -250,19 +257,13 @@ ${bold(red('All data will be lost.'))}
       const migrationSuccessStdMessage = 'Your database is now in sync with your Prisma schema.'
       const migrationSuccessMongoMessage = 'Your database indexes are now in sync with your Prisma schema.'
 
-      // this is safe, as if the protocol was unknown, we would have already exited the program with an error
-      const provider = protocolToConnectorType(`${datasourceInfo.url?.split(':')[0]}:`)
+      const provider = schemaContext.primaryDatasource?.activeProvider
 
       process.stdout.write(
         `\n${rocketEmoji}${
           provider === 'mongodb' ? migrationSuccessMongoMessage : migrationSuccessStdMessage
         } ${migrationTimeMessage}\n`,
       )
-    }
-
-    // Run if not skipped
-    if (!process.env.PRISMA_MIGRATE_SKIP_GENERATE && !args['--skip-generate']) {
-      await migrate.tryToRunGenerate(datasourceInfo)
     }
 
     return ``

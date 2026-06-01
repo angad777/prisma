@@ -1,50 +1,80 @@
-import { ClientEngineType } from '@prisma/internals'
 import fs from 'fs'
 import path from 'path'
 
 import type { BuildOptions } from '../../../helpers/compile/build'
 import { build } from '../../../helpers/compile/build'
-import { copyFilePlugin } from '../../../helpers/compile/plugins/copyFilePlugin'
 import { fillPlugin, smallBuffer, smallDecimal } from '../../../helpers/compile/plugins/fill-plugin/fillPlugin'
+import { nodeProtocolPlugin } from '../../../helpers/compile/plugins/nodeProtocolPlugin'
 import { noSideEffectsPlugin } from '../../../helpers/compile/plugins/noSideEffectsPlugin'
 
-const wasmQueryEngineDir = path.dirname(require.resolve('@prisma/query-engine-wasm/package.json'))
 const wasmQueryCompilerDir = path.dirname(require.resolve('@prisma/query-compiler-wasm/package.json'))
 const fillPluginDir = path.join('..', '..', 'helpers', 'compile', 'plugins', 'fill-plugin')
 const functionPolyfillPath = path.join(fillPluginDir, 'fillers', 'function.ts')
-const weakrefPolyfillPath = path.join(fillPluginDir, 'fillers', 'weakref.ts')
 const runtimeDir = path.resolve(__dirname, '..', 'runtime')
 
-const DRIVER_ADAPTER_SUPPORTED_PROVIDERS = ['postgresql', 'sqlite', 'mysql'] as const
-
+const DRIVER_ADAPTER_SUPPORTED_PROVIDERS = ['postgresql', 'sqlite', 'mysql', 'sqlserver', 'cockroachdb'] as const
 type DriverAdapterSupportedProvider = (typeof DRIVER_ADAPTER_SUPPORTED_PROVIDERS)[number]
 
-// we define the config for runtime
-function nodeRuntimeBuildConfig(targetBuildType: typeof TARGET_BUILD_TYPE): BuildOptions {
+const MODULE_FORMATS = ['esm', 'cjs'] as const
+type ModuleFormat = (typeof MODULE_FORMATS)[number]
+
+const QUERY_COMPILER_BUILD_TYPES = ['fast', 'small'] as const
+type QueryCompilerBuildType = (typeof QUERY_COMPILER_BUILD_TYPES)[number]
+
+function getOutExtension(format: ModuleFormat): Record<string, string> {
   return {
+    esm: { '.js': '.mjs' },
+    cjs: { '.js': '.js' },
+  }[format]
+}
+
+const shouldMinify = !process.env.DEV && process.env.MINIFY !== 'false'
+
+const NODE_ESM_BANNER = `\
+import * as __banner_node_module from "node:module";
+import * as __banner_node_path from "node:path";
+import * as process from "node:process";
+import * as __banner_node_url from "node:url";
+const __filename = __banner_node_url.fileURLToPath(import.meta.url);
+globalThis['__dirname'] = __banner_node_path.dirname(__filename);
+const require = __banner_node_module.createRequire(import.meta.url);`
+
+// we define the config for runtime
+function nodeRuntimeBuildConfig(targetBuildType: typeof TARGET_BUILD_TYPE, format: ModuleFormat): BuildOptions {
+  return {
+    format,
     name: targetBuildType,
     entryPoints: ['src/runtime/index.ts'],
     outfile: `runtime/${targetBuildType}`,
+    outExtension: getOutExtension(format),
     bundle: true,
-    minify: true,
+    minify: shouldMinify,
     sourcemap: 'linked',
     emitTypes: ['library', 'client'].includes(targetBuildType),
+    external: ['@prisma/client-runtime-utils'],
     define: {
       NODE_CLIENT: 'true',
       TARGET_BUILD_TYPE: JSON.stringify(targetBuildType),
       // that fixes an issue with lz-string umd builds
       'define.amd': 'false',
     },
-    plugins: [noSideEffectsPlugin(/^(arg|lz-string)$/)],
+    plugins: [noSideEffectsPlugin(/^(arg|lz-string)$/), nodeProtocolPlugin],
+    banner: format === 'esm' ? { js: NODE_ESM_BANNER } : undefined,
   }
 }
 
-function wasmBindgenRuntimeConfig(type: 'engine' | 'compiler', provider: DriverAdapterSupportedProvider): BuildOptions {
+function wasmBindgenRuntimeConfig(
+  provider: DriverAdapterSupportedProvider,
+  format: ModuleFormat,
+  buildType: QueryCompilerBuildType,
+): BuildOptions {
   return {
-    name: `query_${type}_bg.${provider}`,
-    entryPoints: [`@prisma/query-${type}-wasm/${provider}/query_${type}_bg.js`],
-    outfile: `runtime/query_${type}_bg.${provider}`,
-    minify: true,
+    format,
+    name: `query_compiler_${buildType}_bg.${provider}`,
+    entryPoints: [`@prisma/query-compiler-wasm/${provider}/query_compiler_${buildType}_bg.js`],
+    outfile: `runtime/query_compiler_${buildType}_bg.${provider}`,
+    outExtension: getOutExtension(format),
+    minify: shouldMinify,
     plugins: [
       fillPlugin({
         defaultFillers: false,
@@ -60,18 +90,23 @@ function wasmBindgenRuntimeConfig(type: 'engine' | 'compiler', provider: DriverA
 }
 
 // we define the config for browser
-const browserBuildConfig: BuildOptions = {
-  name: 'browser',
-  entryPoints: ['src/runtime/index-browser.ts'],
-  outfile: 'runtime/index-browser',
-  target: ['chrome58', 'firefox57', 'safari11', 'edge16'],
-  bundle: true,
-  minify: true,
-  sourcemap: 'linked',
+function browserBuildConfigs(): BuildOptions[] {
+  return MODULE_FORMATS.map((format) => ({
+    format,
+    name: 'browser',
+    entryPoints: ['src/runtime/index-browser.ts'],
+    outfile: 'runtime/index-browser',
+    outExtension: getOutExtension(format),
+    target: ['chrome58', 'firefox57', 'safari11', 'edge16'],
+    bundle: true,
+    minify: shouldMinify,
+    sourcemap: 'linked',
+    external: ['@prisma/client-runtime-utils'],
+  }))
 }
 
 /**
- * Overrides meant for edge, wasm and react-native builds
+ * Overrides meant for edge and wasm builds
  * If at some point they diverge feel free to split them
  */
 const commonRuntimesOverrides = {
@@ -81,19 +116,13 @@ const commonRuntimesOverrides = {
     define: 'fn',
     globals: functionPolyfillPath,
   },
-  // we shim WeakRef, it does not exist on CF
-  WeakRef: {
-    globals: weakrefPolyfillPath,
-  },
-  // these can not be exported anymore
-  './warnEnvConflicts': { contents: '' },
 }
 
 const runtimesCommonBuildConfig = {
-  target: 'ES2021',
+  target: 'ES2022',
   entryPoints: ['src/runtime/index.ts'],
   bundle: true,
-  minify: true,
+  minify: shouldMinify,
   sourcemap: 'linked',
   emitTypes: false,
   define: {
@@ -105,83 +134,71 @@ const runtimesCommonBuildConfig = {
   },
   logLevel: 'error',
   legalComments: 'none',
+  external: ['@prisma/client-runtime-utils'],
 } satisfies BuildOptions
 
-// we define the config for edge
-const edgeRuntimeBuildConfig: BuildOptions = {
-  ...runtimesCommonBuildConfig,
-  name: 'edge',
-  outfile: 'runtime/edge',
-  define: {
-    ...runtimesCommonBuildConfig.define,
-    // tree shake the Library and Binary engines out
-    TARGET_BUILD_TYPE: '"edge"',
-  },
-  plugins: [
-    fillPlugin({
-      fillerOverrides: commonRuntimesOverrides,
-    }),
-  ],
+function wasmFileToBase64(wasmBuffer: Buffer, format: ModuleFormat = 'esm'): string {
+  const base64 = wasmBuffer.toString('base64')
+  const moduleExports = format === 'esm' ? 'export { wasm }' : 'module.exports = { wasm }'
+  const encodedWasmContent = `const wasm = "${base64}";\n${moduleExports}\n`
+  return encodedWasmContent
 }
 
 // we define the config for wasm
-function wasmRuntimeBuildConfig(type: 'engine' | 'compiler'): BuildOptions {
+function wasmEdgeRuntimeBuildConfig(format: ModuleFormat, name: string): BuildOptions {
   return {
     ...runtimesCommonBuildConfig,
+    format,
     target: 'ES2022',
-    name: 'wasm',
-    outfile: 'runtime/wasm',
+    name,
+    outfile: `runtime/${name}`,
+    outExtension: getOutExtension(format),
     define: {
       ...runtimesCommonBuildConfig.define,
-      TARGET_BUILD_TYPE: '"wasm"',
+      TARGET_BUILD_TYPE: `"${name}"`,
     },
     plugins: [
       fillPlugin({
         // not yet enabled in edge build while driverAdapters is not GA
         fillerOverrides: { ...commonRuntimesOverrides, ...smallBuffer, ...smallDecimal },
       }),
-      copyFilePlugin(
-        DRIVER_ADAPTER_SUPPORTED_PROVIDERS.map((provider) => ({
-          from: path.join(
-            type === 'compiler' ? wasmQueryCompilerDir : wasmQueryEngineDir,
-            provider,
-            `query_${type}_bg.wasm`,
-          ),
-          to: path.join(runtimeDir, `query_${type}_bg.${provider}.wasm`),
-        })),
-      ),
+      {
+        name: 'wasm-base64-encoder',
+        setup(build) {
+          build.onEnd(() => {
+            const extToModuleFormatMap = {
+              esm: 'mjs',
+              cjs: 'js',
+            } satisfies Record<ModuleFormat, string>
+
+            for (const provider of DRIVER_ADAPTER_SUPPORTED_PROVIDERS) {
+              for (const buildType of QUERY_COMPILER_BUILD_TYPES) {
+                const wasmFilePath = path.join(wasmQueryCompilerDir, provider, `query_compiler_${buildType}_bg.wasm`)
+                try {
+                  const wasmBuffer = fs.readFileSync(wasmFilePath)
+                  for (const [moduleFormat, extension] of Object.entries(extToModuleFormatMap)) {
+                    const base64FilePath = path.join(
+                      runtimeDir,
+                      `query_compiler_${buildType}_bg.${provider}.wasm-base64.${extension}`,
+                    )
+                    const base64Content = wasmFileToBase64(wasmBuffer, moduleFormat as ModuleFormat)
+                    fs.writeFileSync(base64FilePath, base64Content)
+                  }
+                } catch (error) {
+                  throw new Error(`Failed to create base64 encoded WASM file for ${provider}`, {
+                    cause: error,
+                  })
+                }
+              }
+            }
+          })
+        },
+      },
     ],
   }
 }
 
-// React Native is similar to edge in the sense it doesn't have the node API/libraries
-// and also not all the browser APIs, therefore it needs to polyfill the same things as edge
-const reactNativeBuildConfig: BuildOptions = {
-  ...runtimesCommonBuildConfig,
-  name: 'react-native',
-  target: 'ES2022',
-  outfile: 'runtime/react-native',
-  emitTypes: true,
-  define: {
-    NODE_CLIENT: 'false',
-    TARGET_BUILD_TYPE: '"react-native"',
-  },
-  plugins: [
-    fillPlugin({
-      fillerOverrides: { ...commonRuntimesOverrides },
-    }),
-  ],
-}
-
-// we define the config for edge in esm format (used by deno)
-const edgeEsmRuntimeBuildConfig: BuildOptions = {
-  ...edgeRuntimeBuildConfig,
-  name: 'edge-esm',
-  outfile: 'runtime/edge-esm',
-  format: 'esm',
-}
-
-// we define the config for generator
+// old-style generator compatiblity shim for studio
 const generatorBuildConfig: BuildOptions = {
   name: 'generator',
   entryPoints: ['src/generation/generator.ts'],
@@ -199,48 +216,39 @@ const defaultIndexConfig: BuildOptions = {
   emitTypes: false,
 }
 
-const accelerateContractBuildConfig: BuildOptions = {
-  name: 'accelerate-contract',
-  entryPoints: ['src/runtime/core/engines/accelerate/AccelerateEngine.ts'],
-  outfile: '../accelerate-contract/dist/index',
-  format: 'cjs',
-  bundle: true,
-  emitTypes: true,
-}
-
-const clientEngineRuntimeBuildConfig: BuildOptions = {
-  name: 'client-engine-runtime',
-  entryPoints: ['src/runtime/core/engines/client/external-bundle-entrypoint.ts'],
-  outfile: '../client-engine-runtime/dist/index',
-  format: 'esm',
-  bundle: true,
-  emitTypes: true,
-}
-
 function writeDtsRexport(fileName: string) {
-  fs.writeFileSync(path.join(runtimeDir, fileName), 'export * from "./library"\n')
+  fs.writeFileSync(path.join(runtimeDir, fileName), 'export * from "./client"\n')
+}
+
+function* allNodeRuntimeBuildConfigs(): Generator<BuildOptions> {
+  for (const format of MODULE_FORMATS) {
+    yield nodeRuntimeBuildConfig('client', format)
+  }
+}
+
+function* allWasmEdgeRuntimeConfigs(): Generator<BuildOptions> {
+  for (const format of MODULE_FORMATS) {
+    yield wasmEdgeRuntimeBuildConfig(format, `wasm-compiler-edge`)
+  }
+}
+
+function* allWasmBindgenRuntimeConfigs(): Generator<BuildOptions> {
+  for (const provider of DRIVER_ADAPTER_SUPPORTED_PROVIDERS) {
+    for (const format of MODULE_FORMATS) {
+      for (const buildType of QUERY_COMPILER_BUILD_TYPES) {
+        yield wasmBindgenRuntimeConfig(provider, format, buildType)
+      }
+    }
+  }
 }
 
 void build([
   generatorBuildConfig,
-  nodeRuntimeBuildConfig(ClientEngineType.Binary),
-  nodeRuntimeBuildConfig(ClientEngineType.Library),
-  nodeRuntimeBuildConfig(ClientEngineType.Client),
-  browserBuildConfig,
-  edgeRuntimeBuildConfig,
-  edgeEsmRuntimeBuildConfig,
-  wasmRuntimeBuildConfig('engine'),
-  wasmRuntimeBuildConfig('compiler'),
-  wasmBindgenRuntimeConfig('engine', 'postgresql'),
-  wasmBindgenRuntimeConfig('engine', 'mysql'),
-  wasmBindgenRuntimeConfig('engine', 'sqlite'),
-  wasmBindgenRuntimeConfig('compiler', 'postgresql'),
-  wasmBindgenRuntimeConfig('compiler', 'mysql'),
-  wasmBindgenRuntimeConfig('compiler', 'sqlite'),
+  ...allNodeRuntimeBuildConfigs(),
+  ...browserBuildConfigs(),
+  ...allWasmEdgeRuntimeConfigs(),
+  ...allWasmBindgenRuntimeConfigs(),
   defaultIndexConfig,
-  reactNativeBuildConfig,
-  accelerateContractBuildConfig,
-  clientEngineRuntimeBuildConfig,
 ]).then(() => {
-  writeDtsRexport('binary.d.ts')
+  writeDtsRexport('wasm-compiler-edge.d.ts')
 })

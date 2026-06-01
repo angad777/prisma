@@ -8,38 +8,16 @@ The [Neon serverless driver](https://github.com/neondatabase/serverless) is a lo
 
 ## Getting started
 
-To get started, enable the `driverAdapters` Preview feature in your Prisma schema:
-
-```prisma
-// schema.prisma
-generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-```
-
-> **Note**: Make sure your connection string exists in your `.env` file. Refer to [Neon's docs](https://neon.tech/docs/connect/connect-from-any-app) to learn how to retrieve your database's connection string.
+> **Note**: Make sure your connection string exists in your `process.env`. Refer to [Neon's docs](https://neon.tech/docs/connect/connect-from-any-app) to learn how to retrieve your database's connection string.
 >
 > ```bash
 > DATABASE_URL="postgres://user:password@server.us-east-2.aws.neon.tech/neondb"
 > ```
 
-Generate Prisma Client:
-
-```sh
-npx prisma generate
-```
-
-Install the Prisma adapter for Neon's serverless driver, Neon's serverless driver and `ws` packages:
+To get started, install the Prisma adapter for Neon's serverless driver and `ws` packages:
 
 ```sh
 npm install @prisma/adapter-neon
-npm install @neondatabase/serverless
 npm install ws
 ```
 
@@ -47,7 +25,7 @@ Update your Prisma Client instance to use the Neon serverless driver using a Web
 
 ```ts
 // Import needed packages
-import { Pool, neonConfig } from '@neondatabase/serverless'
+import { neonConfig } from '@neondatabase/serverless'
 import { PrismaNeon } from '@prisma/adapter-neon'
 import { PrismaClient } from '@prisma/client'
 import ws from 'ws'
@@ -57,8 +35,7 @@ neonConfig.webSocketConstructor = ws
 const connectionString = `${process.env.DATABASE_URL}`
 
 // Init prisma client
-const pool = new Pool({ connectionString })
-const adapter = new PrismaNeon(pool)
+const adapter = new PrismaNeon({ connectionString })
 const prisma = new PrismaClient({ adapter })
 
 // Use Prisma Client as normal

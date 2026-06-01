@@ -1,6 +1,6 @@
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Prisma as PrismaNamespace, PrismaClient } from './node_modules/@prisma/client'
+import type { Prisma as PrismaNamespace, PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 declare let Prisma: typeof PrismaNamespace
@@ -72,15 +72,14 @@ testMatrix.setupTestSuite(
         expect(Prisma.AnyNull).toBeInstanceOf(Prisma.NullTypes.AnyNull)
       })
 
-      test('custom instances are not allowed', async () => {
-        await expect(
-          prisma.requiredJsonField.create({
-            data: {
-              // @ts-expect-error
-              json: new Prisma.NullTypes.JsonNull(),
-            },
-          }),
-        ).rejects.toMatchPrismaErrorInlineSnapshot(`"Invalid ObjectEnumValue"`)
+      test('custom instances are accepted for cross-bundle compatibility', async () => {
+        const record = await prisma.requiredJsonField.create({
+          data: {
+            // @ts-expect-error
+            json: new Prisma.NullTypes.JsonNull(),
+          },
+        })
+        expect(record.json).toBeNull()
       })
     })
   },

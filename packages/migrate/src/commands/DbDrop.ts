@@ -1,22 +1,25 @@
+import type { PrismaConfigInternal } from '@prisma/config'
 import {
   arg,
   canPrompt,
   checkUnsupportedDataProxy,
   Command,
+  createSchemaPathInput,
   dropDatabase,
   format,
   HelpError,
   isError,
   link,
-  loadEnvFile,
+  loadSchemaContext,
+  validatePrismaConfigWithDatasource,
 } from '@prisma/internals'
-import { bold, dim, red, yellow } from 'kleur/colors'
+import { bold, dim, italic, red, yellow } from 'kleur/colors'
 import prompt from 'prompts'
 
-import { getDatasourceInfo } from '../utils/ensureDatabaseExists'
+import { aiAgentConfirmationCheckpoint } from '../utils/ai-safety'
+import { parseDatasourceInfo } from '../utils/ensureDatabaseExists'
 import { DbDropNeedsForceError } from '../utils/errors'
 import { PreviewFlagError } from '../utils/flagErrors'
-import { getSchemaPathAndPrint } from '../utils/getSchemaPathAndPrint'
 import { printDatasource } from '../utils/printDatasource'
 
 export class DbDrop implements Command {
@@ -37,9 +40,12 @@ ${bold('Usage')}
 
   ${dim('$')} prisma db drop [options] --preview-feature
 
+  The datasource URL configuration is read from the Prisma config file (e.g., ${italic('prisma.config.ts')}).
+
 ${bold('Options')}
 
    -h, --help   Display this help message
+     --config   Custom path to your Prisma config file
      --schema   Custom path to your Prisma schema
   -f, --force   Skip the confirmation prompt
 
@@ -55,7 +61,7 @@ ${bold('Examples')}
   ${dim('$')} prisma db drop --preview-feature --force
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal, baseDir: string): Promise<string | Error> {
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
@@ -63,14 +69,13 @@ ${bold('Examples')}
       '--force': Boolean,
       '-f': '--force',
       '--schema': String,
+      '--config': String,
       '--telemetry-information': String,
     })
 
     if (isError(args)) {
       return this.help(args.message)
     }
-
-    await checkUnsupportedDataProxy('db drop', args, true)
 
     if (args['--help']) {
       return this.help()
@@ -80,11 +85,20 @@ ${bold('Examples')}
       throw new PreviewFlagError()
     }
 
-    await loadEnvFile({ schemaPath: args['--schema'], printMessage: true })
+    const schemaContext = await loadSchemaContext({
+      schemaPath: createSchemaPathInput({
+        schemaPathFromArgs: args['--schema'],
+        schemaPathFromConfig: config.schema,
+        baseDir,
+      }),
+    })
 
-    const { schemaPath } = await getSchemaPathAndPrint(args['--schema'])
+    const cmd = 'db drop'
+    const validatedConfig = validatePrismaConfigWithDatasource({ config, cmd })
 
-    const datasourceInfo = await getDatasourceInfo({ schemaPath, throwIfEnvError: true })
+    checkUnsupportedDataProxy({ cmd, validatedConfig })
+
+    const datasourceInfo = parseDatasourceInfo(schemaContext.primaryDatasource, validatedConfig)
     printDatasource({ datasourceInfo })
 
     process.stdout.write('\n') // empty line
@@ -112,8 +126,13 @@ ${bold('Examples')}
       }
     }
 
-    // Url exists because we set `throwIfEnvErrors: true` in `getDatasourceInfo`
-    if (await dropDatabase(datasourceInfo.url!, datasourceInfo.configDir!)) {
+    aiAgentConfirmationCheckpoint()
+
+    if (datasourceInfo.url === undefined) {
+      throw new Error('Datasource URL is undefined')
+    }
+
+    if (await dropDatabase(datasourceInfo.url, baseDir)) {
       return `${process.platform === 'win32' ? '' : '🚀  '}The ${datasourceInfo.prettyProvider} database "${
         datasourceInfo.dbName
       }" from "${datasourceInfo.dbLocation}" was successfully dropped.\n`

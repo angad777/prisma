@@ -10,10 +10,19 @@ We also encourage you to join our sprawling [community](https://www.prisma.io/co
 
 Welcome to the monorepo for our TypeScript code for the Prisma ORM. (for the Engines' code written in Rust [it's there](https://github.com/prisma/prisma-engines))
 
+## Contributing via comments
+
+### Signal interest without noise
+
+To help maintainers triage efficiently:
+
+- Use GitHub reactions (👍) on the top post or relevant comments to show support.
+- Only add a comment if you bring _new, actionable information_ (e.g., reproducible steps, environment details, impact/severity, or a concrete use case).
+- Comments that only say “+1”, “same here”, or “any update?” create notification noise and may be marked as off-topic. Please use reactions instead on the main post.
+
 ## General Prerequisites
 
-1. Install Node.js `>=18.18` minimum, [latest LTS is recommended](https://nodejs.org/en/about/releases/)
-
+1. Install Node.js `>=20.19` minimum, [latest LTS is recommended](https://nodejs.org/en/about/releases/)
    - Recommended: use [`nvm`](https://github.com/nvm-sh/nvm) for managing Node.js versions
 
 1. Install [`pnpm`](https://pnpm.io/) (for installing npm dependencies, using pnpm workspaces)
@@ -25,8 +34,17 @@ Copy paste these commands to install the global dependencies:
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash
 nvm install 18
-npm install --global pnpm@9 ts-node
+npm install --global pnpm@10 ts-node
 ```
+
+### For Windows Users
+
+The Prisma repository is configured for Unix-like environments (Linux/macOS). Commands, scripts, and configurations in this repo assume a POSIX-compliant shell and filesystem, meaning that Windows environments are not natively supported. If you’re developing on Windows, you’ll need to configure your environment accordingly, as commands and tooling may not work as expected without adjustments.
+
+We recommend one of the following approaches:
+
+1. [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install): WSL allows you to run a Linux distribution alongside your Windows installation, providing a native-like development environment
+2. [Visual Studio Code with Dev Containers](https://code.visualstudio.com/docs/devcontainers/containers): Utilizing Visual Studio Code’s Dev Containers feature allows you to develop inside a Docker container, ensuring a consistent environment across different systems
 
 ## General Setup
 
@@ -312,10 +330,14 @@ List of types:
 
 List of directories in the monorepo:
 
+- adapter-better-sqlite3
+- adapter-d1
 - adapter-libsql
+- adapter-mssql
 - adapter-neon
 - adapter-pg
 - adapter-planetscale
+- adapter-mariadb
 - cli
 - client
 - debug

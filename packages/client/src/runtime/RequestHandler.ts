@@ -1,5 +1,7 @@
 import { Context } from '@opentelemetry/api'
-import Debug from '@prisma/debug'
+import { deserializeJsonObject } from '@prisma/client-engine-runtime'
+import { hasBatchIndex } from '@prisma/client-runtime-utils'
+import { Debug } from '@prisma/debug'
 import { assertNever } from '@prisma/internals'
 import stripAnsi from 'strip-ansi'
 
@@ -16,13 +18,11 @@ import {
   PrismaClientRustPanicError,
   PrismaClientUnknownRequestError,
 } from '.'
-import { CustomDataProxyFetch } from './core/engines/common/Engine'
+import { AccelerateExtensionFetchDecorator } from './core/engines/common/Engine'
 import { QueryEngineResultData } from './core/engines/common/types/QueryEngine'
 import { throwValidationException } from './core/errorRendering/throwValidationException'
-import { hasBatchIndex } from './core/errors/ErrorWithBatchIndex'
 import { createApplyBatchExtensionsFunction } from './core/extensions/applyQueryExtensions'
 import { MergedExtensionsList } from './core/extensions/MergedExtensionsList'
-import { deserializeJsonResponse } from './core/jsonProtocol/deserializeJsonResponse'
 import { getBatchId } from './core/jsonProtocol/getBatchId'
 import { isWrite } from './core/jsonProtocol/isWrite'
 import { GlobalOmitOptions } from './core/jsonProtocol/serializeJsonQuery'
@@ -52,7 +52,7 @@ export type RequestParams = {
   otelParentCtx?: Context
   otelChildCtx?: Context
   globalOmit?: GlobalOmitOptions
-  customDataProxyFetch?: CustomDataProxyFetch
+  customDataProxyFetch?: AccelerateExtensionFetchDecorator
 }
 
 export type HandleErrorParams = {
@@ -119,6 +119,15 @@ export class RequestHandler {
       },
 
       batchBy: (request) => {
+        // If the request is part of an interactive transaction, we want to group all requests with the same
+        // protocolQuery together to take advantage of automatic batching in the engine.
+        // Note that we only do this for interactive transactions, not for batch transactions, as it can lead to queries
+        // being executed out of order in batch transactions.
+        if (request.transaction?.kind === 'itx') {
+          const batchId = getBatchId(request.protocolQuery)
+          return `itx-${request.transaction.id}${batchId ? `-${batchId}` : ''}`
+        }
+
         if (request.transaction?.id) {
           return `transaction-${request.transaction.id}`
         }
@@ -274,7 +283,7 @@ export class RequestHandler {
     const deserializedResponse =
       operation === 'queryRaw'
         ? deserializeRawResult(extractedResponse as RawResponse)
-        : (deserializeJsonResponse(extractedResponse) as unknown)
+        : (deserializeJsonObject(extractedResponse) as unknown)
 
     return unpacker ? unpacker(deserializedResponse) : deserializedResponse
   }
@@ -296,6 +305,8 @@ function getTransactionOptions<PayloadType>(
       kind: 'batch',
       options: {
         isolationLevel: transaction.isolationLevel,
+        maxWait: transaction.maxWait,
+        timeout: transaction.timeout,
       },
     }
   }

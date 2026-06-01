@@ -1,19 +1,18 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import zlib from 'node:zlib'
+
 import Debug from '@prisma/debug'
-import fs from 'fs'
 import hasha from 'hasha'
 import fetch from 'node-fetch'
 import retry from 'p-retry'
-import path from 'path'
-import rimraf from 'rimraf'
 import tempy from 'tempy'
-import { promisify } from 'util'
-import zlib from 'zlib'
 
 import { getProxyAgent } from './getProxyAgent'
 import { overwriteFile } from './utils'
 
 const debug = Debug('prisma:fetch-engine:downloadZip')
-const del = promisify(rimraf)
+const rimraf = (path: string) => fs.promises.rm(path, { force: true, recursive: true })
 
 export type DownloadResult = {
   lastModified: string
@@ -93,7 +92,7 @@ export async function downloadZip(
       const size = parseFloat(response.headers.get('content-length') as string)
       const ws = fs.createWriteStream(partial)
 
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises, no-async-promise-executor
+      // eslint-disable-next-line no-async-promise-executor
       return await new Promise(async (resolve, reject) => {
         let bytesRead = 0
 
@@ -148,8 +147,8 @@ export async function downloadZip(
 
   // it's ok if the unlink fails
   try {
-    await del(partial)
-    await del(tmpDir)
+    await rimraf(partial)
+    await rimraf(tmpDir)
   } catch (e) {
     debug(e)
   }

@@ -1,19 +1,22 @@
+import type { PrismaConfigInternal } from '@prisma/config'
 import {
   arg,
   checkUnsupportedDataProxy,
   Command,
+  createSchemaPathInput,
   format,
   getCommandWithExecutor,
   HelpError,
+  inferDirectoryConfig,
   isError,
   link,
-  loadEnvFile,
+  loadSchemaContext,
+  validatePrismaConfigWithDatasource,
 } from '@prisma/internals'
-import { bold, dim, green, red } from 'kleur/colors'
+import { bold, dim, green, italic, red } from 'kleur/colors'
 
 import { Migrate } from '../Migrate'
-import { ensureCanConnectToDatabase, getDatasourceInfo } from '../utils/ensureDatabaseExists'
-import { getSchemaPathAndPrint } from '../utils/getSchemaPathAndPrint'
+import { ensureCanConnectToDatabase, parseDatasourceInfo } from '../utils/ensureDatabaseExists'
 import { printDatasource } from '../utils/printDatasource'
 
 export class MigrateResolve implements Command {
@@ -22,7 +25,7 @@ export class MigrateResolve implements Command {
   }
 
   private static help = format(`
-Resolve issues with database migrations in deployment databases: 
+Resolve issues with database migrations in deployment databases:
 - recover from failed migrations
 - baseline databases when starting to use Prisma Migrate on existing databases
 - reconcile hotfixes done manually on databases with your migration history
@@ -30,21 +33,24 @@ Resolve issues with database migrations in deployment databases:
 Run "prisma migrate status" to identify if you need to use resolve.
 
 Read more about resolving migration history issues: ${link('https://pris.ly/d/migrate-resolve')}
- 
+
 ${bold('Usage')}
 
   ${dim('$')} prisma migrate resolve [options]
-  
+
+  The datasource URL configuration is read from the Prisma config file (e.g., ${italic('prisma.config.ts')}).
+
 ${bold('Options')}
 
     -h, --help   Display this help message
+      --config   Custom path to your Prisma config file
       --schema   Custom path to your Prisma schema
      --applied   Record a specific migration as applied
  --rolled-back   Record a specific migration as rolled back
 
 ${bold('Examples')}
 
-  Update migrations table, recording a specific migration as applied 
+  Update migrations table, recording a specific migration as applied
   ${dim('$')} prisma migrate resolve --applied 20201231000000_add_users_table
 
   Update migrations table, recording a specific migration as rolled back
@@ -54,7 +60,7 @@ ${bold('Examples')}
   ${dim('$')} prisma migrate resolve --rolled-back 20201231000000_add_users_table --schema=./schema.prisma
 `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(argv: string[], config: PrismaConfigInternal, baseDir: string): Promise<string | Error> {
     const args = arg(
       argv,
       {
@@ -63,6 +69,7 @@ ${bold('Examples')}
         '--applied': String,
         '--rolled-back': String,
         '--schema': String,
+        '--config': String,
         '--telemetry-information': String,
       },
       false,
@@ -72,17 +79,25 @@ ${bold('Examples')}
       return this.help(args.message)
     }
 
-    await checkUnsupportedDataProxy('migrate resolve', args, true)
-
     if (args['--help']) {
       return this.help()
     }
 
-    await loadEnvFile({ schemaPath: args['--schema'], printMessage: true })
+    const schemaContext = await loadSchemaContext({
+      schemaPath: createSchemaPathInput({
+        schemaPathFromArgs: args['--schema'],
+        schemaPathFromConfig: config.schema,
+        baseDir,
+      }),
+    })
+    const { migrationsDirPath } = inferDirectoryConfig(schemaContext, config)
 
-    const { schemaPath } = (await getSchemaPathAndPrint(args['--schema']))!
+    const cmd = 'migrate resolve'
+    const validatedConfig = validatePrismaConfigWithDatasource({ config, cmd })
 
-    printDatasource({ datasourceInfo: await getDatasourceInfo({ schemaPath }) })
+    checkUnsupportedDataProxy({ cmd, validatedConfig })
+
+    printDatasource({ datasourceInfo: parseDatasourceInfo(schemaContext.primaryDatasource, validatedConfig) })
 
     // if both are not defined
     if (!args['--applied'] && !args['--rolled-back']) {
@@ -106,15 +121,23 @@ ${bold(green(getCommandWithExecutor('prisma migrate resolve --rolled-back 202012
         )
       }
 
-      await ensureCanConnectToDatabase(schemaPath)
+      // TODO: check why the output and error handling here is different than in `MigrateDeploy`.
+      await ensureCanConnectToDatabase(baseDir, validatedConfig)
 
-      const migrate = new Migrate(schemaPath)
+      const migrate = await Migrate.setup({
+        schemaEngineConfig: config,
+        baseDir,
+        migrationsDirPath,
+        schemaContext,
+        extensions: config['extensions'],
+      })
+
       try {
         await migrate.markMigrationApplied({
           migrationId: args['--applied'],
         })
       } finally {
-        migrate.stop()
+        await migrate.stop()
       }
 
       process.stdout.write(`\nMigration ${args['--applied']} marked as applied.\n`)
@@ -128,15 +151,22 @@ ${bold(green(getCommandWithExecutor('prisma migrate resolve --rolled-back 202012
         )
       }
 
-      await ensureCanConnectToDatabase(schemaPath)
+      await ensureCanConnectToDatabase(baseDir, validatedConfig)
 
-      const migrate = new Migrate(schemaPath)
+      const migrate = await Migrate.setup({
+        schemaEngineConfig: config,
+        baseDir,
+        migrationsDirPath,
+        schemaContext,
+        extensions: config['extensions'],
+      })
+
       try {
         await migrate.markMigrationRolledBack({
           migrationId: args['--rolled-back'],
         })
       } finally {
-        migrate.stop()
+        await migrate.stop()
       }
 
       process.stdout.write(`\nMigration ${args['--rolled-back']} marked as rolled back.\n`)

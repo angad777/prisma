@@ -4,14 +4,13 @@ on:
   pull_request:
     paths-ignore:
       # Any update here needs to be done for all files
-      # (test.yml, benchmark.yml, release-ci.yml, bundle-size.yml, ci-aux-files.yml)
+      # (test.yml, benchmark.yml, release.yml, bundle-size.yml, ci-aux-files.yml)
       - '*.md'
       - '*.bench.ts'
       - 'LICENSE'
       - '.dockerignore'
       - 'scripts/ci/publish.ts'
       - '.github/CODEOWNERS'
-      - '.github/renovate.json'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/DISCUSSION_TEMPLATE/**'
       - '.devcontainer/**'
@@ -28,13 +27,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install & build
         uses: ./.github/actions/setup
         with:
-          node-version: 18
-          pnpm-version: 9
+          node-version: '20.19.0'
           skip-tsc: true
           skip-build: true
 

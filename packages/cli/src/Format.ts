@@ -1,8 +1,19 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { arg, Command, format, formatms, formatSchema, HelpError, validate } from '@prisma/internals'
-import { getSchemaPathAndPrint } from '@prisma/migrate'
+import type { PrismaConfigInternal } from '@prisma/config'
+import {
+  arg,
+  Command,
+  createSchemaPathInput,
+  format,
+  formatms,
+  formatSchema,
+  getSchemaWithPath,
+  HelpError,
+  printSchemaLoadedMessage,
+  validate,
+} from '@prisma/internals'
 import { bold, dim, red, underline } from 'kleur/colors'
 
 /**
@@ -23,6 +34,7 @@ ${bold('Usage')}
 ${bold('Options')}
 
   -h, --help   Display this help message
+    --config   Custom path to your Prisma config file
     --schema   Custom path to your Prisma schema
 
 ${bold('Examples')}
@@ -35,12 +47,17 @@ Or specify a Prisma schema path
 
   `)
 
-  public async parse(argv: string[]): Promise<string | Error> {
+  public async parse(
+    argv: string[],
+    config: PrismaConfigInternal,
+    baseDir: string = process.cwd(),
+  ): Promise<string | Error> {
     const before = Math.round(performance.now())
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
       '--schema': String,
+      '--config': String,
       '--telemetry-information': String,
       '--check': Boolean,
     })
@@ -53,7 +70,14 @@ Or specify a Prisma schema path
       return this.help()
     }
 
-    const { schemaPath, schemas } = await getSchemaPathAndPrint(args['--schema'])
+    const { schemaPath, schemas } = await getSchemaWithPath({
+      schemaPath: createSchemaPathInput({
+        schemaPathFromArgs: args['--schema'],
+        schemaPathFromConfig: config.schema,
+        baseDir,
+      }),
+    })
+    printSchemaLoadedMessage(schemaPath)
 
     const formattedDatamodel = await formatSchema({ schemas })
 

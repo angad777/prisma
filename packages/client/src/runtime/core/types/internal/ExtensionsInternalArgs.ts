@@ -1,6 +1,5 @@
 import { RequestParams } from '../../../RequestHandler'
-import { CustomDataProxyFetch } from '../../engines'
-import { IsolationLevel } from '../../engines/common/types/Transaction'
+import { AccelerateExtensionFetchDecorator, type IsolationLevel } from '../../engines'
 import { QueryOptions } from '../exported/ExtensionArgs'
 import { JsArgs } from '../exported/JsApi'
 import { RawQueryArgs } from '../exported/RawQueryArgs'
@@ -25,7 +24,7 @@ export type BatchArgs = {
 
 export type BatchInternalParams = {
   requests: RequestParams[]
-  customDataProxyFetch?: CustomDataProxyFetch
+  customDataProxyFetch?: AccelerateExtensionFetchDecorator
 }
 
 export type BatchQueryOptionsCb = (args: BatchQueryOptionsCbArgs) => Promise<any>

@@ -1,4 +1,4 @@
-import { watch as createWatcher } from 'chokidar'
+import { ChokidarOptions, watch as createWatcher } from 'chokidar'
 import * as esbuild from 'esbuild'
 import { BuildContext } from 'esbuild'
 import { writeFileSync } from 'fs'
@@ -12,7 +12,6 @@ import { map } from '../blaze/map'
 import { omit } from '../blaze/omit'
 import { pipe } from '../blaze/pipe'
 import { transduce } from '../blaze/transduce'
-import { depCheckPlugin } from './plugins/depCheckPlugin'
 import { fixImportsPlugin } from './plugins/fixImportsPlugin'
 import { onErrorPlugin } from './plugins/onErrorPlugin'
 import { resolvePathsPlugin } from './plugins/resolvePathsPlugin'
@@ -28,7 +27,7 @@ export type BuildOptions = esbuild.BuildOptions & {
 
 const DEFAULT_BUILD_OPTIONS = {
   platform: 'node',
-  target: 'ES2021',
+  target: 'ES2022',
   logLevel: 'error',
   tsconfig: 'tsconfig.build.json',
   metafile: true,
@@ -133,47 +132,22 @@ async function executeEsBuild(options: BuildOptions) {
 }
 
 /**
- * A blank esbuild run to do an analysis of our deps
- */
-async function dependencyCheck(options: BuildOptions) {
-  // we only check our dependencies for a full build
-  if (process.env.DEV === 'true') return undefined
-  // Only run on test and publish pipelines on Buildkite
-  // Meaning we skip on GitHub Actions
-  // Because it's slow and runs for each job, during setup, making each job slower
-  if (process.env.CI && !process.env.BUILDKITE) return undefined
-
-  // we need to bundle everything to do the analysis
-  const buildPromise = esbuild.build({
-    entryPoints: glob.sync('**/*.{j,t}s', {
-      // We don't check dependencies in ecosystem tests because tests are isolated from the build.
-      ignore: ['./src/__tests__/**/*', './tests/e2e/**/*', './dist/**/*'],
-      gitignore: true,
-    }),
-    logLevel: 'silent', // there will be errors
-    bundle: true, // we bundle to get everything
-    write: false, // no need to write for analysis
-    outdir: 'out',
-    plugins: [depCheckPlugin(options.bundle)],
-  })
-
-  // we absolutely don't care if it has any errors
-  await buildPromise.catch(() => {})
-
-  return undefined
-}
-
-/**
  * Execution pipeline that applies a set of actions
  * @param options
  */
 export async function build(options: BuildOptions[]) {
-  void transduce.async(options, dependencyCheck)
-
   return transduce.async(
     createBuildOptions(options),
-    pipe.async(computeOptions, addExtensionFormat, addDefaultOutDir, executeEsBuild),
+    pipe.async(computeOptions, logStartBuild, addExtensionFormat, addDefaultOutDir, executeEsBuild),
   )
+}
+
+/**
+ * Prints a message every time a new bundle is built
+ */
+function logStartBuild(options: BuildOptions): BuildOptions {
+  console.log(`Building ${options.name} as ${options.format ?? 'cjs'}...`)
+  return options
 }
 
 /**
@@ -184,10 +158,13 @@ const watch = (context: BuildContext, options: BuildOptions) => {
   if (process.env.WATCH !== 'true') return context
 
   // common chokidar options for the watchers
-  const config = { ignoreInitial: true, useFsEvents: true, ignored: ['./src/__tests__/**/*', './package.json'] }
+  const config = {
+    ignoreInitial: true,
+    ignored: [/$src\/__tests__\//, 'package.json'],
+  } satisfies ChokidarOptions
 
   // prepare the incremental builds watcher
-  const changeWatcher = createWatcher(['./src/**/*'], config)
+  const changeWatcher = createWatcher(['./src'], config)
 
   // triggers quick rebuild on file change
   const fastRebuild = debounce(async () => {
@@ -198,8 +175,13 @@ const watch = (context: BuildContext, options: BuildOptions) => {
       return context.rebuild()
     })
 
+    // Handle unexpected internal errors
     if (rebuildResult instanceof Error) {
-      console.error(rebuildResult.message)
+      console.error(rebuildResult)
+      // Handle build errors (e.g., syntax errors)
+    } else if (rebuildResult.errors.length > 0) {
+      // Log the detailed error object from esbuild for better debugging.
+      console.error(rebuildResult.errors)
     }
 
     console.log(`${Date.now() - timeBefore}ms [${options.name ?? ''}]`)

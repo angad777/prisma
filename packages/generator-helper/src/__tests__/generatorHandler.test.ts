@@ -1,4 +1,6 @@
-import path from 'path'
+import path from 'node:path'
+
+import { describe, expect, test } from 'vitest'
 
 import { GeneratorProcess } from '../GeneratorProcess'
 import type { GeneratorOptions } from '../types'
@@ -102,7 +104,6 @@ describe('generatorHandler', () => {
         "prettyName": "This is a pretty name",
         "requiresEngines": [
           "schema-engine",
-          "query-engine",
         ],
         "requiresGenerators": [
           "prisma-client-js",

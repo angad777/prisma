@@ -1,10 +1,18 @@
-// @ts-ignore: this is used to avoid the `Module '"<path>/node_modules/@types/pg/index"' has no default export.` error.
-import { type ColumnType, ColumnTypeEnum } from '@prisma/driver-adapter-utils'
+import { ArgType, type ColumnType, ColumnTypeEnum } from '@prisma/driver-adapter-utils'
 import pg from 'pg'
 import { parse as parseArray } from 'postgres-array'
 
+import { FIRST_NORMAL_OBJECT_ID } from './constants'
+
 const { types } = pg
 const { builtins: ScalarColumnType, getTypeParser } = types
+
+/**
+ * Additional scalar column types not defined in `pg` types builtins.
+ */
+const AdditionalScalarColumnType = {
+  NAME: 19,
+}
 
 /**
  * PostgreSQL array column types (not defined in ScalarColumnType).
@@ -33,6 +41,7 @@ const ArrayColumnType = {
   OID_ARRAY: 1028,
   TEXT_ARRAY: 1009,
   TIMESTAMP_ARRAY: 1115,
+  TIMESTAMPTZ_ARRAY: 1185,
   TIME_ARRAY: 1183,
   UUID_ARRAY: 2951,
   VARBIT_ARRAY: 1563,
@@ -210,6 +219,7 @@ export function fieldToColumnType(fieldTypeId: number): ColumnType {
     case ScalarColumnType.INET:
     case ScalarColumnType.CIDR:
     case ScalarColumnType.XML:
+    case AdditionalScalarColumnType.NAME:
       return ColumnTypeEnum.Text
     case ScalarColumnType.BYTEA:
       return ColumnTypeEnum.Bytes
@@ -242,6 +252,8 @@ export function fieldToColumnType(fieldTypeId: number): ColumnType {
       return ColumnTypeEnum.TimeArray
     case ArrayColumnType.TIMESTAMP_ARRAY:
       return ColumnTypeEnum.DateTimeArray
+    case ArrayColumnType.TIMESTAMPTZ_ARRAY:
+      return ColumnTypeEnum.DateTimeArray
     case ArrayColumnType.JSON_ARRAY:
     case ArrayColumnType.JSONB_ARRAY:
       return ColumnTypeEnum.JsonArray
@@ -257,7 +269,7 @@ export function fieldToColumnType(fieldTypeId: number): ColumnType {
       // We don't use `ColumnTypeEnum.Enum` for enums here and defer the decision to
       // the serializer in QE because it has access to the query schema, while on
       // this level we would have to query the catalog to introspect the type.
-      if (fieldTypeId >= 10_000) {
+      if (fieldTypeId >= FIRST_NORMAL_OBJECT_ID) {
         return ColumnTypeEnum.Text
       }
       throw new UnsupportedNativeDataType(fieldTypeId)
@@ -294,11 +306,11 @@ function normalize_date(date: string): string {
  */
 
 function normalize_timestamp(time: string): string {
-  return time
+  return `${time.replace(' ', 'T')}+00:00`
 }
 
-function normalize_timestampz(time: string): string {
-  return time.split('+')[0]
+function normalize_timestamptz(time: string): string {
+  return time.replace(' ', 'T').replace(/[+-]\d{2}(:\d{2})?$/, '+00:00')
 }
 
 /*
@@ -312,7 +324,7 @@ function normalize_time(time: string): string {
 function normalize_timez(time: string): string {
   // Although it might be controversial, UTC is assumed in consistency with the behavior of rust postgres driver
   // in quaint. See quaint/src/connector/postgres/conversion.rs
-  return time.split('+')[0]
+  return time.replace(/[+-]\d{2}(:\d{2})?$/, '')
 }
 
 /******************/
@@ -339,24 +351,13 @@ function normalize_xml(xml: string): string {
  * stringified here. This function needs to exist as otherwise
  * the default type parser attempts to deserialise it.
  */
-function toJson(json: string): unknown {
+function toJson(json: string): string {
   return json
 }
 
 /************************/
 /* Binary data handling */
 /************************/
-
-/**
- * TODO:
- * 1. Check if using base64 would be more efficient than this encoding.
- * 2. Consider the possibility of eliminating re-encoding altogether
- *    and passing bytea hex format to the engine if that can be aligned
- *    with other adapters of the same database provider.
- */
-function encodeBuffer(buffer: Buffer) {
-  return Array.from(new Uint8Array(buffer))
-}
 
 /*
  * BYTEA - arbitrary raw binary strings
@@ -368,21 +369,10 @@ const parsePgBytes = getTypeParser(ScalarColumnType.BYTEA) as (_: string) => Buf
  * BYTEA_ARRAY - arrays of arbitrary raw binary strings
  */
 
-const parseBytesArray = getTypeParser(ArrayColumnType.BYTEA_ARRAY) as (_: string) => Buffer[]
+const normalizeByteaArray = getTypeParser(ArrayColumnType.BYTEA_ARRAY) as (_: string) => Buffer[]
 
-function normalizeByteaArray(serializedBytesArray) {
-  const buffers = parseBytesArray(serializedBytesArray)
-  return buffers.map((buf) => (buf ? encodeBuffer(buf) : null))
-}
-
-/**
- * Convert bytes to a JSON-encodable representation since we can't
- * currently send a parsed Buffer or ArrayBuffer across JS to Rust
- * boundary.
- */
-function convertBytes(serializedBytes: string): number[] {
-  const buffer = parsePgBytes(serializedBytes)
-  return encodeBuffer(buffer)
+function convertBytes(serializedBytes: string): Buffer {
+  return parsePgBytes(serializedBytes)
 }
 
 /* BIT_ARRAY, VARBIT_ARRAY */
@@ -401,11 +391,14 @@ export const customParsers = {
   [ArrayColumnType.DATE_ARRAY]: normalize_array(normalize_date),
   [ScalarColumnType.TIMESTAMP]: normalize_timestamp,
   [ArrayColumnType.TIMESTAMP_ARRAY]: normalize_array(normalize_timestamp),
-  [ScalarColumnType.TIMESTAMPTZ]: normalize_timestampz,
+  [ScalarColumnType.TIMESTAMPTZ]: normalize_timestamptz,
+  [ArrayColumnType.TIMESTAMPTZ_ARRAY]: normalize_array(normalize_timestamptz),
   [ScalarColumnType.MONEY]: normalize_money,
   [ArrayColumnType.MONEY_ARRAY]: normalize_array(normalize_money),
   [ScalarColumnType.JSON]: toJson,
+  [ArrayColumnType.JSON_ARRAY]: normalize_array(toJson),
   [ScalarColumnType.JSONB]: toJson,
+  [ArrayColumnType.JSONB_ARRAY]: normalize_array(toJson),
   [ScalarColumnType.BYTEA]: convertBytes,
   [ArrayColumnType.BYTEA_ARRAY]: normalizeByteaArray,
   [ArrayColumnType.BIT_ARRAY]: normalize_array(normalizeBit),
@@ -413,21 +406,76 @@ export const customParsers = {
   [ArrayColumnType.XML_ARRAY]: normalize_array(normalize_xml),
 }
 
-// https://github.com/brianc/node-postgres/pull/2930
-export function fixArrayBufferValues(values: unknown[]) {
-  for (let i = 0; i < values.length; i++) {
-    const list = values[i]
-    if (!Array.isArray(list)) {
-      continue
-    }
+export function mapArg<A>(arg: A | Date, argType: ArgType): null | unknown[] | string | Uint8Array | A {
+  if (arg === null) {
+    return null
+  }
 
-    for (let j = 0; j < list.length; j++) {
-      const listItem = list[j]
-      if (ArrayBuffer.isView(listItem)) {
-        list[j] = Buffer.from(listItem.buffer, listItem.byteOffset, listItem.byteLength)
-      }
+  if (Array.isArray(arg) && argType.arity === 'list') {
+    return arg.map((value) => mapArg(value, argType))
+  }
+
+  if (typeof arg === 'string' && argType.scalarType === 'datetime') {
+    arg = new Date(arg)
+  }
+
+  if (arg instanceof Date) {
+    switch (argType.dbType) {
+      case 'TIME':
+      case 'TIMETZ':
+        return formatTime(arg)
+      case 'DATE':
+        return formatDate(arg)
+      default:
+        return formatDateTime(arg)
     }
   }
 
-  return values
+  if (typeof arg === 'string' && argType.scalarType === 'bytes') {
+    return Buffer.from(arg, 'base64')
+  }
+
+  // https://github.com/brianc/node-postgres/pull/2930
+  if (ArrayBuffer.isView(arg)) {
+    return new Uint8Array(arg.buffer, arg.byteOffset, arg.byteLength)
+  }
+
+  return arg
+}
+
+function formatDateTime(date: Date): string {
+  const pad = (n: number, z = 2) => String(n).padStart(z, '0')
+  const ms = date.getUTCMilliseconds()
+  return (
+    pad(date.getUTCFullYear(), 4) +
+    '-' +
+    pad(date.getUTCMonth() + 1) +
+    '-' +
+    pad(date.getUTCDate()) +
+    ' ' +
+    pad(date.getUTCHours()) +
+    ':' +
+    pad(date.getUTCMinutes()) +
+    ':' +
+    pad(date.getUTCSeconds()) +
+    (ms ? '.' + String(ms).padStart(3, '0') : '')
+  )
+}
+
+function formatDate(date: Date): string {
+  const pad = (n: number, z = 2) => String(n).padStart(z, '0')
+  return pad(date.getUTCFullYear(), 4) + '-' + pad(date.getUTCMonth() + 1) + '-' + pad(date.getUTCDate())
+}
+
+function formatTime(date: Date): string {
+  const pad = (n: number, z = 2) => String(n).padStart(z, '0')
+  const ms = date.getUTCMilliseconds()
+  return (
+    pad(date.getUTCHours()) +
+    ':' +
+    pad(date.getUTCMinutes()) +
+    ':' +
+    pad(date.getUTCSeconds()) +
+    (ms ? '.' + String(ms).padStart(3, '0') : '')
+  )
 }

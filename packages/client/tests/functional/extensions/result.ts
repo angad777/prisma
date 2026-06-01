@@ -1,9 +1,10 @@
 import { faker } from '@faker-js/faker'
 import { expectTypeOf } from 'expect-type'
 
+import { AdapterProviders } from '../_utils/providers'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { Post, Prisma as PrismaNamespace, PrismaClient, User } from './node_modules/@prisma/client'
+import type { Post, Prisma as PrismaNamespace, PrismaClient, User } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -17,6 +18,29 @@ function prismaWithExtension() {
           needs: { firstName: true, lastName: true },
           compute(user) {
             return `${user.firstName} ${user.lastName}`
+          },
+        },
+      },
+    },
+  })
+}
+
+function prismaWithUserAndPostExtensions() {
+  return prisma.$extends({
+    result: {
+      user: {
+        fullName: {
+          needs: { firstName: true, lastName: true },
+          compute(user) {
+            return `${user.firstName} ${user.lastName}`
+          },
+        },
+      },
+      post: {
+        postLabel: {
+          needs: { id: true },
+          compute(post) {
+            return `post-${post.id}`
           },
         },
       },
@@ -201,6 +225,165 @@ testMatrix.setupTestSuite(
 
       expect(post?.user.fullName).toBe('John Smith')
       expectTypeOf(post?.user.fullName).toEqualTypeOf<string | undefined>()
+    })
+
+    test('nested reads: include applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const user = await xprisma.user.findFirstOrThrow({
+        include: {
+          posts: true,
+        },
+      })
+
+      expect(user.posts[0].postLabel).toBe(`post-${user.posts[0].id}`)
+    })
+
+    test('nested reads: select applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const user = await xprisma.user.findFirstOrThrow({
+        select: {
+          posts: {
+            select: {
+              postLabel: true,
+            },
+          },
+        },
+      })
+
+      expect(user.posts[0].postLabel).toBeDefined()
+    })
+
+    test('nested writes (create): include applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const createdUser = await xprisma.user.create({
+        data: {
+          email: faker.internet.email(),
+          firstName: 'Nested',
+          lastName: 'Create',
+          posts: {
+            create: [{}],
+          },
+        },
+        include: {
+          posts: true,
+        },
+      })
+
+      expect(createdUser.posts[0].postLabel).toBe(`post-${createdUser.posts[0].id}`)
+    })
+
+    test('nested writes (create): select applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const createdUser = await xprisma.user.create({
+        data: {
+          email: faker.internet.email(),
+          firstName: 'Nested',
+          lastName: 'Create',
+          posts: {
+            create: [{}],
+          },
+        },
+        select: {
+          posts: {
+            select: {
+              postLabel: true,
+            },
+          },
+        },
+      })
+
+      expect(createdUser.posts[0].postLabel).toBeDefined()
+    })
+
+    test('nested writes (update): include applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const updatedUser = await xprisma.user.update({
+        where: { email },
+        data: {
+          firstName: 'Nested Update',
+          posts: {
+            create: [{}],
+          },
+        },
+        include: {
+          posts: true,
+        },
+      })
+
+      expect(updatedUser.posts[0].postLabel).toBe(`post-${updatedUser.posts[0].id}`)
+    })
+
+    test('nested writes (update): select applies result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const updatedUser = await xprisma.user.update({
+        where: { email },
+        data: {
+          firstName: 'Nested Update',
+          posts: {
+            create: [{}],
+          },
+        },
+        select: {
+          posts: {
+            select: {
+              postLabel: true,
+            },
+          },
+        },
+      })
+
+      expect(updatedUser.posts[0].postLabel).toBeDefined()
+    })
+
+    test('fluent reads apply result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const posts = await xprisma.user.findUniqueOrThrow({ where: { email } }).posts()
+
+      expect(posts[0].postLabel).toBe(`post-${posts[0].id}`)
+    })
+
+    test('fluent writes (create) apply result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const posts = await xprisma.user
+        .create({
+          data: {
+            email: faker.internet.email(),
+            firstName: 'Fluent',
+            lastName: 'Create',
+            posts: {
+              create: [{}],
+            },
+          },
+        })
+        .posts()
+
+      expect(posts[0].postLabel).toBe(`post-${posts[0].id}`)
+    })
+
+    test('fluent writes (update) apply result extensions to nested models', async () => {
+      const xprisma = prismaWithUserAndPostExtensions()
+
+      const posts = await xprisma.user
+        .update({
+          where: { email },
+          data: {
+            firstName: 'Fluent Update',
+            posts: {
+              create: [{}],
+            },
+          },
+        })
+        .posts()
+
+      expect(posts[0].postLabel).toBe(`post-${posts[0].id}`)
     })
 
     test('dependencies between computed fields', async () => {
@@ -418,6 +601,10 @@ testMatrix.setupTestSuite(
         suiteConfig.previewFeatures?.includes('relationJoins') === true,
         'https://github.com/prisma/prisma/issues/22971',
       )
+    },
+    skipDriverAdapter: {
+      from: [AdapterProviders.JS_LIBSQL],
+      reason: 'js_libsql: SIGABRT due to panic in libsql (not yet implemented: array)', // TODO: ORM-867
     },
   },
 )

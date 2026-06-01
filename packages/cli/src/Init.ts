@@ -1,5 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
 import { confirm, input, select } from '@inquirer/prompts'
-import type { ConnectorType } from '@prisma/generator-helper'
+import { PrismaConfigInternal } from '@prisma/config'
+import type { ConnectorType } from '@prisma/generator'
 import {
   arg,
   canConnectToDatabase,
@@ -11,22 +15,32 @@ import {
   isError,
   link,
   logger,
-  PRISMA_POSTGRES_PROTOCOL,
   PRISMA_POSTGRES_PROVIDER,
   protocolToConnectorType,
 } from '@prisma/internals'
+import type { operations } from '@prisma/management-api-sdk'
 import dotenv from 'dotenv'
-import fs from 'fs'
+import { Schema as Shape } from 'effect'
 import { bold, dim, green, red, yellow } from 'kleur/colors'
 import ora from 'ora'
-import path from 'path'
 import { match, P } from 'ts-pattern'
 
-import { poll, printPpgInitOutput } from './platform/_'
-import { credentialsFile } from './platform/_lib/credentials'
-import { successMessage } from './platform/_lib/messages'
-import { getPrismaPostgresRegionsOrThrow } from './platform/accelerate/regions'
+import { FileWriter } from './init/file-writer'
+import { printPpgInitOutput, successMessage } from './init/ppg-output'
+import { login } from './management-api/auth'
+import { createAuthenticatedManagementAPI } from './management-api/auth-client'
+import { FileTokenStorage } from './management-api/token-storage'
+import { determineClientOutputPath } from './utils/client-output-path'
 import { printError } from './utils/prompt/utils/print'
+
+type Region = NonNullable<operations['postV1Projects']['requestBody']>['content']['application/json']['region']
+
+/**
+ * Indicates if running in Bun runtime.
+ */
+export const isBun: boolean =
+  // @ts-ignore
+  !!globalThis.Bun || !!globalThis.process?.versions?.bun
 
 export const defaultSchema = (props?: {
   datasourceProvider?: ConnectorType
@@ -39,29 +53,26 @@ export const defaultSchema = (props?: {
     datasourceProvider = 'postgresql',
     generatorProvider = defaultGeneratorProvider,
     previewFeatures = defaultPreviewFeatures,
-    output = defaultOutput,
+    output = '../generated/prisma',
     withModel = false,
-  } = props || {}
-
-  const aboutAccelerate = `\n// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init\n`
-
-  const isProviderCompatibleWithAccelerate = datasourceProvider !== 'sqlite'
+  } = props ?? {}
 
   let schema = `// This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
-${isProviderCompatibleWithAccelerate ? aboutAccelerate : ''}
+
+// Get a free hosted Postgres database in seconds: \`npx create-db\`
+
 generator client {
   provider = "${generatorProvider}"
 ${
   previewFeatures.length > 0
     ? `  previewFeatures = [${previewFeatures.map((feature) => `"${feature}"`).join(', ')}]\n`
     : ''
-}${output != defaultOutput ? `  output = "${output}"\n` : ''}}
+}  output   = "${output}"
+}
 
 datasource db {
   provider = "${datasourceProvider}"
-  url      = env("DATABASE_URL")
 }
 `
 
@@ -100,16 +111,51 @@ model User {
   return schema
 }
 
-export const defaultEnv = (
-  url = 'postgresql://johndoe:randompassword@localhost:5432/mydb?schema=public',
-  comments = true,
-) => {
+export const defaultEnv = async (url: string | undefined, debug = false, comments = true) => {
+  if (url === undefined) {
+    // TODO: bundle the CLI to ESM instead of CommonJS and make these module-level imports
+    const [{ startPrismaDevServer }, { ServerState }] = await Promise.all([
+      import('@prisma/dev'),
+      import('@prisma/dev/internal/state'),
+    ])
+
+    let created = false
+    const state =
+      (await ServerState.fromServerDump({ debug })) ||
+      ((created = true), await ServerState.createExclusively({ debug, persistenceMode: 'stateful' }))
+
+    if (created) {
+      await state.close()
+    }
+
+    const server = await startPrismaDevServer({
+      databasePort: state.databasePort,
+      dryRun: true,
+      name: state.name,
+      persistenceMode: 'stateful',
+      port: state.port,
+      shadowDatabasePort: state.shadowDatabasePort,
+      debug,
+    })
+
+    url = server.ppg.url
+  }
+
   let env = comments
-    ? `# Environment variables declared in this file are automatically made available to Prisma.
-# See the documentation for more detail: https://pris.ly/d/prisma-schema#accessing-environment-variables-from-the-schema
+    ? `# Environment variables declared in this file are NOT automatically loaded by Prisma.
+# Please add \`import "dotenv/config";\` to your \`prisma.config.ts\` file, or use the Prisma CLI with Bun
+# to load environment variables from .env files: https://pris.ly/prisma-config-env-vars.
 
 # Prisma supports the native connection string format for PostgreSQL, MySQL, SQLite, SQL Server, MongoDB and CockroachDB.
-# See the documentation for all the connection string options: https://pris.ly/d/connection-strings\n\n`
+# See the documentation for all the connection string options: https://pris.ly/d/connection-strings
+
+${
+  url.startsWith('prisma+postgres:') && url.includes('localhost')
+    ? `# The following \`prisma+postgres\` URL is similar to the URL produced by running a local Prisma Postgres
+# server with the \`prisma dev\` CLI command, when not choosing any non-default ports or settings. The API key, unlike the
+# one found in a remote Prisma Postgres URL, does not contain any sensitive information.\n\n`
+    : ''
+}`
     : ''
   env += `DATABASE_URL="${url}"`
   return env
@@ -157,18 +203,75 @@ export const defaultURL = (
   }
 }
 
-export const defaultGitIgnore = () => {
+const defaultGitIgnore = () => {
   return `node_modules
 # Keep environment variables out of version control
 .env
 `
 }
 
-export const defaultGeneratorProvider = 'prisma-client-js'
+export const defaultGeneratorProvider = 'prisma-client'
 
 export const defaultPreviewFeatures = []
 
-export const defaultOutput = 'node_modules/.prisma/client'
+function normalizePath(configPath: string) {
+  return JSON.stringify(configPath.replaceAll(path.sep, '/'))
+}
+
+type DefaultConfigInput = {
+  /**
+   * The path to the `prisma` folder.
+   */
+  prismaFolder: string
+  /**
+   * The runtime to use.
+   * Currently, this is only used to customize the Bun experience.
+   */
+  runtime: 'bun' | 'other'
+}
+
+export const defaultConfig = ({ prismaFolder, runtime }: DefaultConfigInput) => {
+  const schemaPath = path.relative(process.cwd(), path.join(prismaFolder, 'schema.prisma'))
+  const migrationsPath = path.relative(process.cwd(), path.join(prismaFolder, 'migrations'))
+
+  const configSrc = match({ runtime })
+    .with({ runtime: 'bun' }, () => {
+      return `\
+// This file was generated by Prisma, and assumes you run Prisma commands using \`bun --bun run prisma [command]\`.
+import { defineConfig, env } from "prisma/config";
+
+export default defineConfig({
+  schema: ${normalizePath(schemaPath)},
+  migrations: {
+    path: ${normalizePath(migrationsPath)},
+  },
+  datasource: {
+    url: env("DATABASE_URL"),
+  },
+});
+`
+    })
+    .otherwise(() => {
+      return `\
+// This file was generated by Prisma, and assumes you have installed the following:
+// npm install --save-dev prisma dotenv
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: ${normalizePath(schemaPath)},
+  migrations: {
+    path: ${normalizePath(migrationsPath)},
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+`
+    })
+
+  return configSrc
+}
 
 export class Init implements Command {
   static new(): Init {
@@ -187,7 +290,7 @@ export class Init implements Command {
              -h, --help   Display this help message
                    --db   Provisions a fully managed Prisma Postgres database on the Prisma Data Platform.
   --datasource-provider   Define the datasource provider to use: postgresql, mysql, sqlite, sqlserver, mongodb or cockroachdb
-   --generator-provider   Define the generator provider to use. Default: \`prisma-client-js\`
+   --generator-provider   Define the generator provider to use. Default: \`prisma-client\`
       --preview-feature   Define a preview feature to use.
                --output   Define Prisma Client generator output path to use.
                   --url   Define a custom datasource url
@@ -198,29 +301,29 @@ export class Init implements Command {
 
   ${bold('Examples')}
 
-  Set up a new Prisma project with PostgreSQL (default)
+  Set up a new \`prisma dev\`-ready (local Prisma Postgres) Prisma project
     ${dim('$')} prisma init
 
   Set up a new Prisma project and specify MySQL as the datasource provider to use
     ${dim('$')} prisma init --datasource-provider mysql
 
-  Set up a new Prisma project and specify \`prisma-client-go\` as the generator provider to use
-    ${dim('$')} prisma init --generator-provider prisma-client-go
+  Set up a new \`prisma dev\`-ready (local Prisma Postgres) Prisma project and specify \`prisma-client\` as the generator provider to use
+    ${dim('$')} prisma init --generator-provider prisma-client
 
-  Set up a new Prisma project and specify \`x\` and \`y\` as the preview features to use
+  Set up a new \`prisma dev\`-ready (local Prisma Postgres) Prisma project and specify \`x\` and \`y\` as the preview features to use
     ${dim('$')} prisma init --preview-feature x --preview-feature y
 
-  Set up a new Prisma project and specify \`./generated-client\` as the output path to use
+  Set up a new \`prisma dev\`-ready (local Prisma Postgres) Prisma project and specify \`./generated-client\` as the output path to use
     ${dim('$')} prisma init --output ./generated-client
 
   Set up a new Prisma project and specify the url that will be used
     ${dim('$')} prisma init --url mysql://user:password@localhost:3306/mydb
 
-  Set up a new Prisma project with an example model
+  Set up a new \`prisma dev\`-ready (local Prisma Postgres) Prisma project with an example model
     ${dim('$')} prisma init --with-model
   `)
 
-  async parse(argv: string[]): Promise<any> {
+  async parse(argv: string[], _config: PrismaConfigInternal): Promise<string | Error> {
     const args = arg(argv, {
       '--help': Boolean,
       '-h': '--help',
@@ -231,13 +334,26 @@ export class Init implements Command {
       '--output': String,
       '--with-model': Boolean,
       '--db': Boolean,
+      '--region': String,
+      '--name': String,
+      '--non-interactive': Boolean,
+      '--prompt': String,
+      '--vibe': String,
+      '--debug': Boolean,
     })
 
     if (isError(args) || args['--help']) {
       return this.help()
     }
 
-    await checkUnsupportedDataProxy('init', args, false)
+    const urlArg = args['--url']
+
+    if (urlArg) {
+      checkUnsupportedDataProxy({
+        cmd: 'init',
+        validatedConfig: { datasource: { url: urlArg } },
+      })
+    }
 
     /**
      * Validation
@@ -256,29 +372,13 @@ export class Init implements Command {
           ),
         },
         (input) => {
-          const datasourceProviderLowercase = input['--datasource-provider'].toLowerCase()
-          if (
-            ![
-              'postgresql',
-              'mysql',
-              'sqlserver',
-              'sqlite',
-              'mongodb',
-              'cockroachdb',
-              'prismapostgres',
-              'prisma+postgres',
-            ].includes(datasourceProviderLowercase)
-          ) {
-            throw new Error(
-              `Provider "${args['--datasource-provider']}" is invalid or not supported. Try again with "postgresql", "mysql", "sqlite", "sqlserver", "mongodb" or "cockroachdb".`,
-            )
-          }
-          const datasourceProvider = datasourceProviderLowercase as ConnectorType
+          const datasourceProvider = input['--datasource-provider'].toLowerCase()
+
+          assertDatasourceProvider(datasourceProvider)
+
           const url = defaultURL(datasourceProvider)
-          return Promise.resolve({
-            datasourceProvider,
-            url,
-          })
+
+          return { datasourceProvider, url }
         },
       )
       .with(
@@ -306,32 +406,42 @@ export class Init implements Command {
         },
       )
       .otherwise(() => {
-        // Default to PostgreSQL
-        return Promise.resolve({
-          datasourceProvider: 'postgresql' as ConnectorType,
+        return {
+          datasourceProvider: 'postgresql' as const,
           url: undefined,
-        })
+        }
       })
     const generatorProvider = args['--generator-provider']
     const previewFeatures = args['--preview-feature']
     const output = args['--output']
-    const isPpgCommand = args['--db'] || datasourceProvider === PRISMA_POSTGRES_PROVIDER
+    const isPpgCommand =
+      args['--db'] || datasourceProvider === PRISMA_POSTGRES_PROVIDER || args['--prompt'] || args['--vibe']
+
+    if (args['--debug']) {
+      console.log(`[isBun]`, isBun)
+    }
 
     let prismaPostgresDatabaseUrl: string | undefined
-    let workspaceId = ``
-    let projectId = ``
-    let environmentId = ``
+    let workspaceId: string | undefined
+    let projectId: string | undefined
+    let environmentId: string | undefined
 
     const outputDir = process.cwd()
     const prismaFolder = path.join(outputDir, 'prisma')
 
+    const writer = new FileWriter(outputDir)
+
+    let generatedSchema: string | undefined
+    let generatedName: string | undefined
+
     if (isPpgCommand) {
-      const PlatformCommands = await import(`./platform/_`)
+      const tokenStorage = new FileTokenStorage()
+      const tokens = await tokenStorage.getTokens()
 
-      const credentials = await credentialsFile.load()
-      if (isError(credentials)) throw credentials
-
-      if (!credentials) {
+      if (!tokens) {
+        if (args['--non-interactive']) {
+          return 'Please authenticate before creating a Prisma Postgres project.'
+        }
         console.log('This will create a project for you on console.prisma.io and requires you to be authenticated.')
         const authAnswer = await confirm({
           message: 'Would you like to authenticate?',
@@ -339,67 +449,118 @@ export class Init implements Command {
         if (!authAnswer) {
           return 'Project creation aborted. You need to authenticate to use Prisma Postgres'
         }
-        const authenticationResult = await PlatformCommands.loginOrSignup()
-        console.log(`Successfully authenticated as ${bold(authenticationResult.email)}.`)
+        await login({ utmMedium: 'command-init-db' })
+      }
+
+      if (args['--prompt'] || args['--vibe']) {
+        const prompt = args['--prompt'] || args['--vibe'] || ''
+        const spinner = ora(`Generating a Prisma Schema based on your description ${bold(prompt)} ...`).start()
+
+        try {
+          const serverResponseShape = Shape.Struct({
+            generatedSchema: Shape.String,
+            generatedName: Shape.String,
+          })
+
+          ;({ generatedSchema, generatedName } = Shape.decodeUnknownSync(serverResponseShape)(
+            await (
+              await fetch(`https://prisma-generate-server.prisma.workers.dev/`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  description: prompt,
+                }),
+              })
+            ).json(),
+          ))
+        } catch (e) {
+          spinner.fail()
+          throw e
+        }
+
+        spinner.succeed('Schema is ready')
       }
 
       console.log("Let's set up your Prisma Postgres database!")
-      const platformToken = await PlatformCommands.getTokenOrThrow(args)
-      const defaultWorkspace = await PlatformCommands.Workspace.getDefaultWorkspaceOrThrow({ token: platformToken })
-      const regions = await getPrismaPostgresRegionsOrThrow({ token: platformToken })
 
-      const ppgRegionSelection = await select({
-        message: 'Select your region:',
-        default: 'us-east-1',
-        choices: regions.map((region) => ({
-          name: `${region.id} - ${region.displayName}`,
-          value: region.id,
-          disabled: region.ppgStatus === 'unavailable',
-        })),
-        loop: true,
-      })
+      const managementAPI = createAuthenticatedManagementAPI()
+      const client = managementAPI.client
 
-      const projectDisplayNameAnswer = await input({
-        message: 'Enter a project name:',
-        default: 'My Prisma Project',
-      })
+      const { data: regionsData, error: regionsError } = await client.GET('/v1/regions/postgres')
+      if (regionsError) {
+        const errorMessage = regionsError.error?.message
+        throw new Error(typeof errorMessage === 'string' ? errorMessage : 'Failed to fetch regions')
+      }
+      if (!regionsData) {
+        throw new Error('No regions data returned')
+      }
+      const regions = regionsData.data
+
+      const ppgRegionSelection =
+        (args['--region'] as Region) ||
+        (await select({
+          message: 'Select your region:',
+          default: 'us-east-1',
+          choices: regions.map((region) => ({
+            name: `${region.id} - ${region.name}`,
+            value: region.id as Region,
+            disabled: region.status !== 'available',
+          })),
+          loop: true,
+        }))
+
+      const projectDisplayNameAnswer =
+        args['--name'] ||
+        (await input({
+          message: 'Enter a project name:',
+          default: generatedName || 'My Prisma Project',
+        }))
 
       const spinner = ora(`Creating project ${bold(projectDisplayNameAnswer)} (this may take a few seconds)...`).start()
 
       try {
-        const project = await PlatformCommands.Project.createProjectOrThrow({
-          token: platformToken,
-          displayName: projectDisplayNameAnswer,
-          workspaceId: defaultWorkspace.id,
-          allowRemoteDatabases: false,
-          ppgRegion: ppgRegionSelection,
+        const { data: projectData, error: projectError } = await client.POST('/v1/projects', {
+          body: {
+            createDatabase: true,
+            name: projectDisplayNameAnswer,
+            region: ppgRegionSelection,
+          },
         })
 
-        spinner.text = `Waiting for your Prisma Postgres database to be ready...`
+        if (projectError) {
+          const errorMessage = projectError.error?.message
+          throw new Error(typeof errorMessage === 'string' ? errorMessage : 'Failed to create project')
+        }
+        if (!projectData) {
+          throw new Error('No project data returned')
+        }
 
-        workspaceId = defaultWorkspace.id
-        projectId = project.id
-        environmentId = project.defaultEnvironment.id
+        const project = projectData.data
 
-        await poll(
-          () =>
-            PlatformCommands.Environment.getEnvironmentOrThrow({
-              environmentId: project.defaultEnvironment.id,
-              token: platformToken,
-            }),
-          (environment: Awaited<ReturnType<typeof PlatformCommands.Environment.getEnvironmentOrThrow>>) =>
-            environment.ppg.status === 'healthy' && environment.accelerate.status.enabled,
-          5000, // Poll every 5 seconds
-          120000, // if it takes more than two minutes, bail with an error
+        if (!project.database) {
+          // This should never happen: `database` should only be `null` when
+          // the request body has `createDatabase: false`.
+          throw new Error('Missing database info in response')
+        }
+
+        const connection = project.database.connections?.find(
+          (c) => Boolean(c.endpoints?.direct?.connectionString) || Boolean(c.endpoints?.pooled?.connectionString),
         )
 
-        const serviceToken = await PlatformCommands.ServiceToken.createOrThrow({
-          token: platformToken,
-          environmentId: project.defaultEnvironment.id,
-          displayName: `database-setup-prismaPostgres-api-key`,
-        })
+        const connectionString =
+          connection?.endpoints?.direct?.connectionString ?? connection?.endpoints?.pooled?.connectionString
 
-        prismaPostgresDatabaseUrl = `${PRISMA_POSTGRES_PROTOCOL}//accelerate.prisma-data.net/?api_key=${serviceToken.value}`
+        if (!connectionString) {
+          throw new Error('Missing connection string in response')
+        }
+
+        prismaPostgresDatabaseUrl = connectionString
+
+        workspaceId = project.workspace.id.replace(/^wksp_/, '')
+        projectId = project.id.replace(/^proj_/, '')
+        environmentId = project.database.id.replace(/^db_/, '')
 
         spinner.succeed(successMessage('Your Prisma Postgres database is ready ✅'))
       } catch (error) {
@@ -416,8 +577,8 @@ export class Init implements Command {
       if (isPpgCommand) {
         return printPpgInitOutput({
           databaseUrl: prismaPostgresDatabaseUrl!,
-          workspaceId,
-          projectId,
+          workspaceId: workspaceId!,
+          projectId: projectId!,
           environmentId,
           isExistingPrismaProject: true,
         })
@@ -463,22 +624,34 @@ export class Init implements Command {
       fs.mkdirSync(prismaFolder)
     }
 
-    fs.writeFileSync(
+    const clientOutput = output ?? determineClientOutputPath(prismaFolder)
+
+    writer.write(
       path.join(prismaFolder, 'schema.prisma'),
-      defaultSchema({
-        datasourceProvider,
-        generatorProvider,
-        previewFeatures,
-        output,
-        withModel: args['--with-model'],
-      }),
+      generatedSchema ||
+        defaultSchema({
+          datasourceProvider,
+          generatorProvider,
+          previewFeatures,
+          output: clientOutput,
+          withModel: args['--with-model'],
+        }),
     )
 
     const databaseUrl = prismaPostgresDatabaseUrl || url
     const warnings: string[] = []
+
+    writer.write(
+      path.join(outputDir, 'prisma.config.ts'),
+      defaultConfig({
+        prismaFolder,
+        runtime: isBun ? 'bun' : 'other',
+      }),
+    )
+
     const envPath = path.join(outputDir, '.env')
     if (!fs.existsSync(envPath)) {
-      fs.writeFileSync(envPath, defaultEnv(databaseUrl))
+      writer.write(envPath, await defaultEnv(databaseUrl, args['--debug']))
     } else {
       const envFile = fs.readFileSync(envPath, { encoding: 'utf8' })
       const config = dotenv.parse(envFile) // will return an object
@@ -486,81 +659,86 @@ export class Init implements Command {
         warnings.push(
           `${yellow('warn')} Prisma would have added DATABASE_URL but it already exists in ${bold(
             path.relative(outputDir, envPath),
-          )}`,
+          )}.`,
         )
       } else {
-        fs.appendFileSync(envPath, `\n\n` + '# This was inserted by `prisma init`:\n' + defaultEnv(databaseUrl))
+        fs.appendFileSync(
+          envPath,
+          `\n\n` + '# This was inserted by `prisma init`:\n' + (await defaultEnv(databaseUrl, args['--debug'])),
+        )
       }
     }
 
     const gitignorePath = path.join(outputDir, '.gitignore')
     try {
-      fs.writeFileSync(gitignorePath, defaultGitIgnore(), { flag: 'wx' })
+      writer.write(gitignorePath, defaultGitIgnore(), { flag: 'wx' })
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
         warnings.push(
           `${yellow(
             'warn',
-          )} You already have a .gitignore file. Don't forget to add \`.env\` in it to not commit any private information.`,
+          )} You already have a ${bold('.gitignore')} file. Don't forget to add ${bold('.env')} in it to not commit any private information.`,
         )
       } else {
         console.error('Failed to write .gitignore file, reason: ', e)
       }
     }
 
-    const steps: string[] = []
-
-    if (datasourceProvider === 'mongodb') {
-      steps.push(`Define models in the schema.prisma file.`)
-    } else {
-      steps.push(
-        `Run ${green(getCommandWithExecutor('prisma db pull'))} to turn your database schema into a Prisma schema.`,
-      )
+    // Append the generated client to the .gitignore file regardless of whether we created it
+    // in the previous step.
+    const clientPathRelativeToOutputDir = path.relative(outputDir, path.resolve(prismaFolder, clientOutput))
+    try {
+      fs.appendFileSync(gitignorePath, `\n/${clientPathRelativeToOutputDir.replaceAll(path.sep, '/')}\n`)
+    } catch (e) {
+      console.error('Failed to append client path to .gitignore file, reason: ', e)
     }
 
-    steps.push(
-      `Run ${green(
-        getCommandWithExecutor('prisma generate'),
-      )} to generate the Prisma Client. You can then start querying your database.`,
-    )
+    const connectExistingDatabaseSteps = `\
+  1. Configure your DATABASE_URL in ${green('prisma.config.ts')}
+  2. Run ${green(getCommandWithExecutor('prisma db pull'))} to introspect your database.`
 
-    steps.push(
-      `Tip: Explore how you can extend the ${green(
-        'ORM',
-      )} with scalable connection pooling, global caching, and real-time database events. Read: https://pris.ly/cli/beyond-orm`,
-    )
+    const postgresProviders: ConnectorType[] = ['postgres', 'postgresql', 'prisma+postgres']
 
-    if (!url || args['--datasource-provider']) {
-      if (!args['--datasource-provider']) {
-        steps.unshift(
-          `Set the ${green('provider')} of the ${green('datasource')} block in ${green(
-            'schema.prisma',
-          )} to match your database: ${green('postgresql')}, ${green('mysql')}, ${green('sqlite')}, ${green(
-            'sqlserver',
-          )}, ${green('mongodb')} or ${green('cockroachdb')}.`,
-        )
-      }
+    let setupDatabaseSection: string
+    if (postgresProviders.includes(datasourceProvider)) {
+      setupDatabaseSection = `\
+Next, choose how you want to set up your database:
 
-      steps.unshift(
-        `Set the ${green('DATABASE_URL')} in the ${green(
-          '.env',
-        )} file to point to your existing database. If your database has no tables yet, read https://pris.ly/d/getting-started`,
-      )
+CONNECT EXISTING DATABASE:
+${connectExistingDatabaseSteps}
+
+CREATE NEW DATABASE:
+  Local: ${green('npx prisma dev')} (runs Postgres locally in your terminal)
+  Cloud: ${green('npx create-db')} (creates a free Prisma Postgres database)`
+    } else {
+      setupDatabaseSection = `\
+Next, set up your database:
+${connectExistingDatabaseSteps}`
     }
 
     const defaultOutput = `
-✔ Your Prisma schema was created at ${green('prisma/schema.prisma')}
-  You can now open it in your favorite editor.
-${warnings.length > 0 && logger.should.warn() ? `\n${warnings.join('\n')}\n` : ''}
-Next steps:
-${steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+Initialized Prisma in your project
 
-More information in our documentation:
-${link('https://pris.ly/d/getting-started')}
-    `
+${writer.format({
+  level: 0,
+  printHeadersFromLevel: 1,
+  indentSize: 2,
+})}
+${warnings.length > 0 && logger.should.warn() ? `\n${warnings.join('\n')}\n` : ''}
+${setupDatabaseSection}
+
+Then, define your models in ${green('prisma/schema.prisma')} and run ${green(getCommandWithExecutor('prisma migrate dev'))} to apply your schema.
+
+Learn more: ${link('https://pris.ly/getting-started')}
+ `
 
     return isPpgCommand
-      ? printPpgInitOutput({ databaseUrl: prismaPostgresDatabaseUrl!, workspaceId, projectId, environmentId })
+      ? printPpgInitOutput({
+          databaseUrl: prismaPostgresDatabaseUrl!,
+          workspaceId: workspaceId!,
+          projectId: projectId!,
+          environmentId,
+        })
       : defaultOutput
   }
 
@@ -570,5 +748,27 @@ ${link('https://pris.ly/d/getting-started')}
       return new HelpError(`\n${bold(red(`!`))} ${error}\n${Init.help}`)
     }
     return Init.help
+  }
+}
+
+// order matters for the error message.
+const DATASOURCE_PROVIDERS = [
+  'postgresql',
+  'mysql',
+  'sqlite',
+  'sqlserver',
+  'mongodb',
+  'cockroachdb',
+  'prismapostgres',
+  'prisma+postgres',
+] as const
+
+function assertDatasourceProvider(thing: unknown): asserts thing is ConnectorType {
+  if (typeof thing !== 'string' || !DATASOURCE_PROVIDERS.includes(thing as never)) {
+    throw new Error(
+      `Provider "${thing}" is invalid or not supported. Try again with ${DATASOURCE_PROVIDERS.slice(0, -1)
+        .map((p) => `"${p}"`)
+        .join(', ')} or "${DATASOURCE_PROVIDERS.at(-1)}".`,
+    )
   }
 }

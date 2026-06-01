@@ -8,39 +8,16 @@ PlanetScale's serverless driver provides a way of communicating with your Planet
 
 ## Getting started
 
-To get started, enable the `driverAdapters` Preview feature in your Prisma schema:
-
-```prisma
-// schema.prisma
-generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
-}
-
-datasource db {
-  provider     = "mysql"
-  url          = env("DATABASE_URL")
-  relationMode = "prisma"
-}
-```
-
 > **Note**: Ensure you update the host value in your connection string to `aws.connect.psdb.cloud`. You can learn more about this [here](https://planetscale.com/docs/tutorials/planetscale-serverless-driver#add-and-use-the-planetscale-serverless-driver-for-javascript-to-your-project).
 >
 > ```bash
 > DATABASE_URL="mysql://user:password@aws.connect.psdb.cloud/database_name?sslaccept=strict"
 > ```
 
-Generate Prisma Client:
-
-```sh
-npx prisma generate
-```
-
-Install the Prisma adapter for PlanetScale, PlanetScale serverless driver and `undici` packages:
+To get started, install the Prisma adapter for PlanetScale and `undici` packages:
 
 ```sh
 npm install @prisma/adapter-planetscale
-npm install @planetscale/database
 npm install undici
 ```
 
@@ -50,7 +27,6 @@ Update your Prisma Client instance to use the PlanetsScale serverless driver:
 
 ```ts
 // Import needed packages
-import { Client } from '@planetscale/database'
 import { PrismaPlanetScale } from '@prisma/adapter-planetscale'
 import { PrismaClient } from '@prisma/client'
 import { fetch as undiciFetch } from 'undici'
@@ -59,8 +35,7 @@ import { fetch as undiciFetch } from 'undici'
 const connectionString = `${process.env.DATABASE_URL}`
 
 // Init prisma client
-const client = new Client({ url: connectionString, fetch: undiciFetch })
-const adapter = new PrismaPlanetScale(client)
+const adapter = new PrismaPlanetScale({ url: connectionString, fetch: undiciFetch })
 const prisma = new PrismaClient({ adapter })
 
 // Use Prisma Client as normal

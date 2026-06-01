@@ -1,9 +1,11 @@
+import os from 'node:os'
+import { finished } from 'node:stream/promises'
+
 import { arg } from '@prisma/internals'
 import { createReadStream, existsSync } from 'fs'
 import fs from 'fs/promises'
 import glob from 'globby'
 import path from 'path'
-import { pipeline } from 'stream/promises'
 import { $, ProcessOutput, sleep } from 'zx'
 
 const monorepoRoot = path.resolve(__dirname, '..', '..', '..', '..', '..')
@@ -36,7 +38,7 @@ async function main() {
     process.exit(1)
   }
 
-  args['--maxWorkers'] = args['--maxWorkers'] ?? (process.env.CI === 'true' ? 3 : Infinity)
+  args['--maxWorkers'] = args['--maxWorkers'] ?? os.cpus().length
   args['--runInBand'] = args['--runInBand'] ?? false
   args['--skipPack'] = args['--skipPack'] ?? false
   args['--verbose'] = args['--verbose'] ?? false
@@ -57,6 +59,8 @@ async function main() {
 
   let allPackageFolderNames = await fs.readdir(path.join(monorepoRoot, 'packages'))
   allPackageFolderNames = allPackageFolderNames.filter((p) => !p.includes('DS_Store'))
+
+  const prismaTmpDir = path.join(os.homedir(), '.local', 'share', 'prisma-tmp')
 
   if (args['--skipPack'] === false) {
     // this process will need to modify some package.json, we save copies
@@ -79,13 +83,13 @@ async function main() {
       await fs.writeFile(allPkgJsonPaths[i], JSON.stringify(allPkgJson[i], null, 2))
     }
 
-    await $`pnpm -r --parallel exec pnpm pack --pack-destination /tmp/`
+    await $`pnpm -r --parallel exec pnpm pack --pack-destination ${prismaTmpDir}/`
     await restoreOriginalState()
   }
 
   console.log('🐳 Starting tests in docker')
   // tarball was created, ready to send it to docker and begin e2e tests
-  const testStepFiles = await glob('../**/_steps.ts', { cwd: __dirname })
+  const testStepFiles = await glob(['../**/_steps.ts', '../**/_steps.cts'], { cwd: __dirname })
   let e2eTestNames = testStepFiles.map((p) => path.relative('..', path.dirname(p)))
 
   if (args._.length > 0) {
@@ -93,8 +97,8 @@ async function main() {
   }
 
   const dockerVolumes = [
-    `/tmp/prisma-0.0.0.tgz:/tmp/prisma-0.0.0.tgz`, // hardcoded because folder doesn't match name
-    ...allPackageFolderNames.map((p) => `/tmp/prisma-${p}-0.0.0.tgz:/tmp/prisma-${p}-0.0.0.tgz`),
+    `${prismaTmpDir}/prisma-0.0.0.tgz:/tmp/prisma-0.0.0.tgz`, // hardcoded because folder doesn't match name
+    ...allPackageFolderNames.map((p) => `${prismaTmpDir}/prisma-${p}-0.0.0.tgz:/tmp/prisma-${p}-0.0.0.tgz`),
     `${path.join(monorepoRoot, 'packages', 'engines')}:/engines`,
     `${path.join(monorepoRoot, 'packages', 'client')}:/client`,
     `${e2eRoot}:/e2e`,
@@ -141,20 +145,17 @@ async function main() {
     console.log('🏃 Running tests in parallel')
 
     const pendingJobResults = [] as Promise<void>[]
-    let availableWorkers = args['--maxWorkers']
-    for (const [i, job] of dockerJobs.entries()) {
-      while (availableWorkers === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
+    const semaphore = new Semaphore(args['--maxWorkers'])
 
-      --availableWorkers // borrow worker
+    for (const [i, job] of dockerJobs.entries()) {
+      await semaphore.acquire()
+
       const pendingJob = (async () => {
         console.log(`💡 Running test ${i + 1}/${dockerJobs.length}`)
         jobResults.push(Object.assign(await job(), { name: e2eTestNames[i] }))
-        ++availableWorkers // return worker
       })()
 
-      pendingJobResults.push(pendingJob)
+      pendingJobResults.push(pendingJob.finally(() => semaphore.release()))
     }
 
     await Promise.allSettled(pendingJobResults)
@@ -165,7 +166,10 @@ async function main() {
 
   if (args['--verbose'] === true) {
     for (const result of failedJobResults) {
-      console.log(`🛑 ${result.name} failed with exit code`, result.exitCode)
+      console.log(`-----------------------------------------------------------------------`)
+      console.log(`🛑🛑🛑 Test "${result.name}" failed with exit code ${result.exitCode} 🛑🛑🛑`)
+      console.log(`\t\t⬇️ Container Log output below ⬇️\n\n`)
+      console.log(`-----------------------------------------------------------------------`)
 
       const logsPath = path.resolve(__dirname, '..', result.name, 'LOGS.txt')
       const dockerLogsPath = path.resolve(__dirname, '..', result.name, 'LOGS.docker.txt')
@@ -176,17 +180,23 @@ async function main() {
         await printFile(dockerLogsPath)
       }
       await sleep(50) // give some time for the logs to be printed (CI issue)
+
+      console.log(`-----------------------------------------------------------------------`)
+      console.log(`🛑 ⬆️ Container Log output of test failure "${result.name}" above ⬆️ 🛑`)
+      console.log(`-----------------------------------------------------------------------`)
     }
   }
 
   // let the tests run and gather a list of logs for containers that have failed
   if (failedJobResults.length > 0) {
     const failedJobLogPaths = failedJobResults.map((result) => path.resolve(__dirname, '..', result.name, 'LOGS.txt'))
+    console.log(`-----------------------------------------------------------------------`)
     console.log(`✅ ${passedJobResults.length}/${jobResults.length} tests passed`)
     console.log(`🛑 ${failedJobResults.length}/${jobResults.length} tests failed`, failedJobLogPaths)
 
     throw new Error('Some tests exited with a non-zero exit code')
   } else {
+    console.log(`-----------------------------------------------------------------------`)
     console.log(`✅ All ${passedJobResults.length}/${jobResults.length} tests passed`)
   }
 }
@@ -198,7 +208,13 @@ async function restoreOriginalState() {
 }
 
 async function printFile(filePath: string) {
-  await pipeline(createReadStream(filePath), process.stdout)
+  try {
+    const fileStream = createReadStream(filePath)
+    fileStream.pipe(process.stdout, { end: false })
+    await finished(fileStream)
+  } catch (err) {
+    console.error(`Error trying to print log file "${filePath}":`, err)
+  }
 }
 
 async function isFile(filePath: string) {
@@ -210,6 +226,31 @@ async function isFile(filePath: string) {
       return false
     }
     throw e
+  }
+}
+
+class Semaphore {
+  #permits: number
+  #waiting: Array<() => void> = []
+
+  constructor(permits: number) {
+    this.#permits = permits
+  }
+
+  async acquire(): Promise<void> {
+    if (this.#permits > 0) {
+      this.#permits--
+    } else {
+      await new Promise<void>((resolve) => this.#waiting.push(resolve))
+    }
+  }
+
+  release(): void {
+    if (this.#waiting.length > 0) {
+      this.#waiting.shift()!()
+    } else {
+      this.#permits++
+    }
   }
 }
 

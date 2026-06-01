@@ -1,7 +1,7 @@
 import { Providers } from '../_utils/providers'
 import testMatrix from './_matrix'
 // @ts-ignore
-import type { PrismaClient } from './node_modules/@prisma/client'
+import type { PrismaClient } from './generated/prisma/client'
 
 declare let prisma: PrismaClient
 
@@ -24,10 +24,6 @@ testMatrix.setupTestSuite(
     })
   },
   {
-    skipDataProxy: {
-      runtimes: ['edge'],
-      reason: 'Error rendering is different for edge client',
-    },
     optOut: {
       from: [Providers.MONGODB],
       reason: 'Test uses aggregateRaw as an example of unsupported method for SQL databases, it exists on mongo',

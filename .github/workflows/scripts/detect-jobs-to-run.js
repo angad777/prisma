@@ -1,29 +1,11 @@
 #!/usr/bin/env node
 // @ts-check
-
-const { stdin } = process
+const streamConsumer = require('node:stream/consumers')
 const fs = require('fs')
-
-// From https://github.com/sindresorhus/get-stdin/blob/main/index.js
-async function getStdin() {
-  let result = ''
-
-  if (stdin.isTTY) {
-    return result
-  }
-
-  stdin.setEncoding('utf8')
-
-  for await (const chunk of stdin) {
-    result += chunk
-  }
-
-  return result
-}
 
 async function main() {
   const jobsToRun = []
-  const stdinData = await getStdin()
+  const stdinData = await streamConsumer.text(process.stdin)
   console.debug(`stdin: \`${stdinData}\``)
   const stdinDataTrimmed = stdinData.trim()
   console.debug(`stdin trimmed: \`${stdinDataTrimmed}\``)
@@ -60,6 +42,8 @@ async function main() {
       jobsToRun.push('-migrate-')
       jobsToRun.push('-cli-')
       jobsToRun.push('-client-e2e-')
+    } else if (filesChanged.every((fileChanged) => fileChanged.startsWith('packages/query-plan-executor/'))) {
+      jobsToRun.push('-query-plan-executor-')
     } else {
       jobsToRun.push('-all-')
     }
